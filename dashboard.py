@@ -159,3 +159,4 @@ footer {visibility: hidden;}
     <b>© 2025 Dashboard Ejecutivo | Industria 4.0 | Powered by Streamlit</b>
 </div>
 """, unsafe_allow_html=True)
+st.write(st.secrets)  # Esto te muestra todos los secrets disponibles
