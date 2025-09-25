@@ -15,7 +15,6 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- Autenticación simple para uploader/resumen ---
 ADMIN_KEY = "admin123"  # Cambia por tu clave secreta personal
 
 if "authenticated" not in st.session_state:
@@ -31,6 +30,12 @@ if not st.session_state["authenticated"]:
         else:
             st.sidebar.error("Clave incorrecta.")
 
+def cargar_excel(uploaded_file):
+    if uploaded_file.name.endswith('.xls'):
+        return pd.read_excel(uploaded_file, engine='xlrd')
+    else:
+        return pd.read_excel(uploaded_file, engine='openpyxl')
+
 if st.session_state["authenticated"]:
     st.sidebar.header("Subida de datos")
     uploaded_file = st.sidebar.file_uploader(
@@ -41,28 +46,33 @@ if st.session_state["authenticated"]:
         st.sidebar.success("Archivo cargado correctamente.")
     st.sidebar.markdown("---")
 
-# --- Mostrar dashboard a todos ---
 st.title("📊 Dashboard Ejecutivo de Producción")
 st.subheader("Interactivo - Supervisión en tiempo real")
 
-# --- Carga de datos solo si existen ---
 if "uploaded_file" in st.session_state and st.session_state["uploaded_file"]:
-    df = pd.read_excel(st.session_state["uploaded_file"], header=0)
+    df = cargar_excel(st.session_state["uploaded_file"])
     df.columns = df.columns.astype(str)
 
-    # --- Filtrar fechas desde 01-sept-2025 en adelante ---
-    fechas = [col for col in df.columns if '-' in col]
+    # Función para validar fechas tipo dd-mmm (ej. 08-sep)
+    def es_fecha_valida(fecha_str):
+        try:
+            # Si el mes es "setiembre", cambia a "sep"
+            fecha_str = fecha_str.replace("setiembre", "sep").replace("septiembre", "sep")
+            datetime.strptime(fecha_str, "%d-%b")
+            return True
+        except:
+            return False
+
+    fechas = [col for col in df.columns if es_fecha_valida(col)]
     fechas_filtradas = [
         f for f in fechas
-        if datetime.strptime(f, "%d-%b") >= datetime.strptime("01-sep", "%d-%b")
+        if datetime.strptime(f.replace("setiembre", "sep").replace("septiembre", "sep") + "-2025", "%d-%b-%Y") >= datetime.strptime("01-sep-2025", "%d-%b-%Y")
     ]
     indicadores = df['Indicador'].dropna().unique().tolist()
 
-    # --- Mostrar filtros avanzados ---
     st.sidebar.header("Filtros de visualización")
-    # Generar mapeo de fechas a semana y mes
     fechas_dt = [
-        datetime.strptime(f + "-2025", "%d-%b-%Y") for f in fechas_filtradas
+        datetime.strptime(f.replace("setiembre", "sep").replace("septiembre", "sep") + "-2025", "%d-%b-%Y") for f in fechas_filtradas
     ]
     semana_map = {f: dt.isocalendar()[1] for f, dt in zip(fechas_filtradas, fechas_dt)}
     mes_map = {f: dt.strftime("%B") for f, dt in zip(fechas_filtradas, fechas_dt)}
@@ -84,18 +94,14 @@ if "uploaded_file" in st.session_state and st.session_state["uploaded_file"]:
         "Indicador", indicadores, default=indicadores
     )
 
-    # --- Data filtrada ---
-    df_filtrada = df[df['Indicador'].isin(indicador_seleccionado)]
-    df_filtrada = df_filtrada[['Indicador'] + fecha_seleccionada]
+    df_filtrada = df[df['Indicador'].isin(indicador_seleccionado)][['Indicador'] + fecha_seleccionada]
     df_melt = df_filtrada.melt(id_vars="Indicador", var_name="Fecha", value_name="Valor")
 
-    # --- Entradas a Surf (75% de entradas respectivas) ---
     entradas = df_melt[df_melt['Indicador'].str.contains('Entrada')]
     entradas_surf = entradas.copy()
     entradas_surf['Valor'] = entradas_surf['Valor'] * 0.75
     entradas_surf['Indicador'] = "Entradas a Surf (75%)"
 
-    # --- KPIs admin (solo tú los ves) ---
     if st.session_state["authenticated"]:
         st.markdown("### KPIs Resumidos (solo admin)")
         col1, col2 = st.columns(2)
@@ -104,7 +110,6 @@ if "uploaded_file" in st.session_state and st.session_state["uploaded_file"]:
         col1.metric("🔵 Entrada Real", f"{entrada_real:,}")
         col2.metric("🟢 Salida Real", f"{salida_real:,}")
 
-    # --- Gráficos cool ---
     st.markdown("### Gráficos Ejecutivos")
     fig_entrada = px.line(
         pd.concat([entradas, entradas_surf]),
@@ -122,7 +127,6 @@ if "uploaded_file" in st.session_state and st.session_state["uploaded_file"]:
     )
     st.plotly_chart(fig_salida, use_container_width=True)
 
-    # --- Filtros por día/semana/mes ---
     st.markdown("#### Filtro avanzado por día, semana y mes")
     filtro_tipo = st.radio("Visualizar por:", ["Día", "Semana", "Mes"], horizontal=True)
     if filtro_tipo == "Día":
@@ -146,7 +150,6 @@ if "uploaded_file" in st.session_state and st.session_state["uploaded_file"]:
 else:
     st.info("El dashboard estará disponible cuando el admin suba el archivo de datos.")
 
-# --- Footer corporativo ---
 st.markdown("""
 <style>
 footer {visibility: hidden;}
