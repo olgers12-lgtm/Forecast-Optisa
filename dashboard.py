@@ -6,7 +6,17 @@ from gspread_dataframe import get_as_dataframe
 from oauth2client.service_account import ServiceAccountCredentials
 from datetime import datetime
 import json
+import streamlit as st
+import json
 
+# Debug: imprime la clave y chequea si se puede cargar como JSON
+st.write("Keys disponibles:", st.secrets.keys())
+
+try:
+    info = json.loads(st.secrets["GCP_SERVICE_ACCOUNT_JSON"])
+    st.write("JSON cargado correctamente:", info)
+except Exception as e:
+    st.error(f"Error al cargar el JSON: {e}")
 CORPORATE_COLORS = [
     "#1F2A56", "#0D8ABC", "#3EC0ED", "#61C0BF", "#F6AE2D", "#F74B36"
 ]
@@ -159,4 +169,4 @@ footer {visibility: hidden;}
     <b>© 2025 Dashboard Ejecutivo | Industria 4.0 | Powered by Streamlit</b>
 </div>
 """, unsafe_allow_html=True)
-st.write(st.secrets)  # Esto te muestra todos los secrets disponibles
+
