@@ -1,7 +1,11 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import gspread
+from gspread_dataframe import get_as_dataframe
+from oauth2client.service_account import ServiceAccountCredentials
 from datetime import datetime
+import json
 
 CORPORATE_COLORS = [
     "#1F2A56", "#0D8ABC", "#3EC0ED", "#61C0BF", "#F6AE2D", "#F74B36"
@@ -13,45 +17,28 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-ADMIN_KEY = "admin123"  # Cambia por tu clave secreta personal
+SHEET_ID = "1U3DwxRVqQFwuPUs0-zvmitgz_LWdhScy-3fu-awBOHU"     # <-- Pon aquí el ID de tu Google Sheet
+SHEET_NAME = "Dia a Dia"              # <-- Nombre de la hoja/tab
 
-if "authenticated" not in st.session_state:
-    st.session_state["authenticated"] = False
-
-if not st.session_state["authenticated"]:
-    st.sidebar.header("Acceso administrador")
-    user_key = st.sidebar.text_input("Ingresa tu clave secreta:", type="password")
-    if st.sidebar.button("Acceder"):
-        if user_key == ADMIN_KEY:
-            st.session_state["authenticated"] = True
-            st.sidebar.success("Acceso concedido.")
-        else:
-            st.sidebar.error("Clave incorrecta.")
-
-def cargar_excel(uploaded_file):
-    if uploaded_file.name.endswith('.xls'):
-        return pd.read_excel(uploaded_file, engine='xlrd')
-    else:
-        return pd.read_excel(uploaded_file, engine='openpyxl')
-
-if st.session_state["authenticated"]:
-    st.sidebar.header("Subida de datos")
-    uploaded_file = st.sidebar.file_uploader(
-        "Sube tu archivo Excel de producción", type=["xlsx", "xls"]
-    )
-    if uploaded_file:
-        st.session_state["uploaded_file"] = uploaded_file
-        st.sidebar.success("Archivo cargado correctamente.")
-    st.sidebar.markdown("---")
+def cargar_gsheet(sheet_id, sheet_name):
+    # Lee credenciales desde secrets
+    service_account_info = json.loads(st.secrets["GCP_SERVICE_ACCOUNT_JSON"])
+    scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
+    credentials = ServiceAccountCredentials.from_json_keyfile_dict(service_account_info, scope)
+    gc = gspread.authorize(credentials)
+    sh = gc.open_by_key(sheet_id)
+    worksheet = sh.worksheet(sheet_name)
+    df = get_as_dataframe(worksheet, evaluate_formulas=True)
+    df.columns = df.columns.astype(str)
+    df = df[df['Indicador'].notna()]
+    return df
 
 st.title("📊 Dashboard Ejecutivo de Producción")
-st.subheader("Interactivo - Supervisión en tiempo real")
+st.subheader("Interactivo, visual y actualizado en tiempo real")
 
-if "uploaded_file" in st.session_state and st.session_state["uploaded_file"]:
-    df = cargar_excel(st.session_state["uploaded_file"])
-    df.columns = df.columns.astype(str)
+try:
+    df = cargar_gsheet(SHEET_ID, SHEET_NAME)
 
-    # Función para validar fechas tipo dd-mmm-yy (ej. 01-sep-25)
     def es_fecha_valida(fecha_str):
         try:
             fecha_str = fecha_str.lower().replace("setiembre", "sep").replace("septiembre", "sep")
@@ -94,22 +81,20 @@ if "uploaded_file" in st.session_state and st.session_state["uploaded_file"]:
     df_filtrada = df[df['Indicador'].isin(indicador_seleccionado)][['Indicador'] + fecha_seleccionada]
     df_melt = df_filtrada.melt(id_vars="Indicador", var_name="Fecha", value_name="Valor")
 
-    # KPIs solo para admin
-    if st.session_state["authenticated"]:
-        st.markdown("### KPIs Resumidos (solo admin)")
-        col1, col2, col3, col4 = st.columns(4)
-        try:
-            entrada_real = df[df['Indicador'] == 'Entrada Real'][fecha_seleccionada].sum().sum()
-            salida_real = df[df['Indicador'] == 'Salida Real'][fecha_seleccionada].sum().sum()
-            wip_real = df[df['Indicador'] == 'WIP REAL (9AM)'][fecha_seleccionada].sum().sum()
-            gap_salida = df[df['Indicador'] == 'GAP Salida'][fecha_seleccionada].sum().sum()
-        except Exception:
-            entrada_real = salida_real = wip_real = gap_salida = 0
-        
-        col1.metric("🔵 Entrada Real", f"{entrada_real:,}")
-        col2.metric("🟢 Salida Real", f"{salida_real:,}")
-        col3.metric("🟡 WIP REAL (9AM)", f"{wip_real:,}")
-        col4.metric("🔴 GAP Salida", f"{gap_salida:,}")
+    st.markdown("### KPIs Ejecutivos")
+    col1, col2, col3, col4 = st.columns(4)
+    try:
+        entrada_real = df[df['Indicador'] == 'Entrada Real'][fecha_seleccionada].sum().sum()
+        salida_real = df[df['Indicador'] == 'Salida Real'][fecha_seleccionada].sum().sum()
+        wip_real = df[df['Indicador'] == 'WIP REAL (9AM)'][fecha_seleccionada].sum().sum()
+        gap_salida = df[df['Indicador'] == 'GAP Salida'][fecha_seleccionada].sum().sum()
+    except Exception:
+        entrada_real = salida_real = wip_real = gap_salida = 0
+
+    col1.metric("🔵 Entrada Real", f"{entrada_real:,}")
+    col2.metric("🟢 Salida Real", f"{salida_real:,}")
+    col3.metric("🟡 WIP REAL (9AM)", f"{wip_real:,}")
+    col4.metric("🔴 GAP Salida", f"{gap_salida:,}")
 
     st.markdown("### Gráficos Ejecutivos")
     fig_entrada = px.line(
@@ -164,8 +149,8 @@ if "uploaded_file" in st.session_state and st.session_state["uploaded_file"]:
         )
 
     st.success("Dashboard actualizado con datos filtrados.")
-else:
-    st.info("El dashboard estará disponible cuando el admin suba el archivo de datos.")
+except Exception as e:
+    st.error(f"No se pudieron cargar los datos: {e}")
 
 st.markdown("""
 <style>
