@@ -1,10 +1,8 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
 import plotly.express as px
 from datetime import datetime
 
-# Configuración de colores corporativos
 CORPORATE_COLORS = [
     "#1F2A56", "#0D8ABC", "#3EC0ED", "#61C0BF", "#F6AE2D", "#F74B36"
 ]
@@ -53,11 +51,9 @@ if "uploaded_file" in st.session_state and st.session_state["uploaded_file"]:
     df = cargar_excel(st.session_state["uploaded_file"])
     df.columns = df.columns.astype(str)
 
-    # Función para validar fechas tipo dd-mmm (ej. 08-sep)
     def es_fecha_valida(fecha_str):
         try:
-            # Si el mes es "setiembre", cambia a "sep"
-            fecha_str = fecha_str.replace("setiembre", "sep").replace("septiembre", "sep")
+            fecha_str = fecha_str.lower().replace("setiembre", "sep").replace("septiembre", "sep")
             datetime.strptime(fecha_str, "%d-%b")
             return True
         except:
@@ -66,13 +62,13 @@ if "uploaded_file" in st.session_state and st.session_state["uploaded_file"]:
     fechas = [col for col in df.columns if es_fecha_valida(col)]
     fechas_filtradas = [
         f for f in fechas
-        if datetime.strptime(f.replace("setiembre", "sep").replace("septiembre", "sep") + "-2025", "%d-%b-%Y") >= datetime.strptime("01-sep-2025", "%d-%b-%Y")
+        if datetime.strptime(f.lower().replace("setiembre", "sep").replace("septiembre", "sep") + "-2025", "%d-%b-%Y") >= datetime.strptime("01-sep-2025", "%d-%b-%Y")
     ]
     indicadores = df['Indicador'].dropna().unique().tolist()
 
     st.sidebar.header("Filtros de visualización")
     fechas_dt = [
-        datetime.strptime(f.replace("setiembre", "sep").replace("septiembre", "sep") + "-2025", "%d-%b-%Y") for f in fechas_filtradas
+        datetime.strptime(f.lower().replace("setiembre", "sep").replace("septiembre", "sep") + "-2025", "%d-%b-%Y") for f in fechas_filtradas
     ]
     semana_map = {f: dt.isocalendar()[1] for f, dt in zip(fechas_filtradas, fechas_dt)}
     mes_map = {f: dt.strftime("%B") for f, dt in zip(fechas_filtradas, fechas_dt)}
@@ -97,24 +93,28 @@ if "uploaded_file" in st.session_state and st.session_state["uploaded_file"]:
     df_filtrada = df[df['Indicador'].isin(indicador_seleccionado)][['Indicador'] + fecha_seleccionada]
     df_melt = df_filtrada.melt(id_vars="Indicador", var_name="Fecha", value_name="Valor")
 
-    entradas = df_melt[df_melt['Indicador'].str.contains('Entrada')]
-    entradas_surf = entradas.copy()
-    entradas_surf['Valor'] = entradas_surf['Valor'] * 0.75
-    entradas_surf['Indicador'] = "Entradas a Surf (75%)"
-
+    # KPIs solo para admin
     if st.session_state["authenticated"]:
         st.markdown("### KPIs Resumidos (solo admin)")
-        col1, col2 = st.columns(2)
-        entrada_real = df[df['Indicador'] == 'Entrada Real'][fecha_seleccionada].sum().sum()
-        salida_real = df[df['Indicador'] == 'Salida Real'][fecha_seleccionada].sum().sum()
+        col1, col2, col3, col4 = st.columns(4)
+        try:
+            entrada_real = df[df['Indicador'] == 'Entrada Real'][fecha_seleccionada].sum().sum()
+            salida_real = df[df['Indicador'] == 'Salida Real'][fecha_seleccionada].sum().sum()
+            wip_real = df[df['Indicador'] == 'WIP REAL (9AM)'][fecha_seleccionada].sum().sum()
+            gap_salida = df[df['Indicador'] == 'GAP Salida'][fecha_seleccionada].sum().sum()
+        except Exception:
+            entrada_real = salida_real = wip_real = gap_salida = 0
+        
         col1.metric("🔵 Entrada Real", f"{entrada_real:,}")
         col2.metric("🟢 Salida Real", f"{salida_real:,}")
+        col3.metric("🟡 WIP REAL (9AM)", f"{wip_real:,}")
+        col4.metric("🔴 GAP Salida", f"{gap_salida:,}")
 
     st.markdown("### Gráficos Ejecutivos")
     fig_entrada = px.line(
-        pd.concat([entradas, entradas_surf]),
+        df_melt[df_melt['Indicador'].str.contains('Entrada')],
         x="Fecha", y="Valor", color="Indicador",
-        title="Entradas Reales y Entradas a Surf (75%)",
+        title="Entradas Proyectadas vs Reales",
         color_discrete_sequence=CORPORATE_COLORS
     )
     st.plotly_chart(fig_entrada, use_container_width=True)
@@ -126,6 +126,22 @@ if "uploaded_file" in st.session_state and st.session_state["uploaded_file"]:
         color_discrete_sequence=CORPORATE_COLORS
     )
     st.plotly_chart(fig_salida, use_container_width=True)
+
+    fig_wip = px.bar(
+        df_melt[df_melt['Indicador'].str.contains('WIP')],
+        x="Fecha", y="Valor", color="Indicador",
+        title="WIP Proyectado y Real",
+        color_discrete_sequence=CORPORATE_COLORS
+    )
+    st.plotly_chart(fig_wip, use_container_width=True)
+
+    fig_gap = px.area(
+        df_melt[df_melt['Indicador'].str.contains('GAP')],
+        x="Fecha", y="Valor", color="Indicador",
+        title="GAP Salida y WIP",
+        color_discrete_sequence=CORPORATE_COLORS
+    )
+    st.plotly_chart(fig_gap, use_container_width=True)
 
     st.markdown("#### Filtro avanzado por día, semana y mes")
     filtro_tipo = st.radio("Visualizar por:", ["Día", "Semana", "Mes"], horizontal=True)
