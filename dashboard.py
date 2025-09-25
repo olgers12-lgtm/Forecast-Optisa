@@ -51,10 +51,11 @@ if "uploaded_file" in st.session_state and st.session_state["uploaded_file"]:
     df = cargar_excel(st.session_state["uploaded_file"])
     df.columns = df.columns.astype(str)
 
+    # Función para validar fechas tipo dd-mmm-yy (ej. 01-sep-25)
     def es_fecha_valida(fecha_str):
         try:
             fecha_str = fecha_str.lower().replace("setiembre", "sep").replace("septiembre", "sep")
-            datetime.strptime(fecha_str, "%d-%b")
+            datetime.strptime(fecha_str, "%d-%b-%y")
             return True
         except:
             return False
@@ -62,13 +63,13 @@ if "uploaded_file" in st.session_state and st.session_state["uploaded_file"]:
     fechas = [col for col in df.columns if es_fecha_valida(col)]
     fechas_filtradas = [
         f for f in fechas
-        if datetime.strptime(f.lower().replace("setiembre", "sep").replace("septiembre", "sep") + "-2025", "%d-%b-%Y") >= datetime.strptime("01-sep-2025", "%d-%b-%Y")
+        if datetime.strptime(f.lower().replace("setiembre", "sep").replace("septiembre", "sep"), "%d-%b-%y") >= datetime.strptime("01-sep-25", "%d-%b-%y")
     ]
     indicadores = df['Indicador'].dropna().unique().tolist()
 
     st.sidebar.header("Filtros de visualización")
     fechas_dt = [
-        datetime.strptime(f.lower().replace("setiembre", "sep").replace("septiembre", "sep") + "-2025", "%d-%b-%Y") for f in fechas_filtradas
+        datetime.strptime(f.lower().replace("setiembre", "sep").replace("septiembre", "sep"), "%d-%b-%y") for f in fechas_filtradas
     ]
     semana_map = {f: dt.isocalendar()[1] for f, dt in zip(fechas_filtradas, fechas_dt)}
     mes_map = {f: dt.strftime("%B") for f, dt in zip(fechas_filtradas, fechas_dt)}
