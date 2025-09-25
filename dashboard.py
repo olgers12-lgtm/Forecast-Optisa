@@ -1,0 +1,124 @@
+import streamlit as st
+import pandas as pd
+import numpy as np
+import plotly.express as px
+
+# Paleta de colores corporativos (puedes ajustar estos hex)
+CORPORATE_COLORS = [
+    "#1F2A56",  # azul corporativo
+    "#0D8ABC",  # azul claro tendencia
+    "#3EC0ED",  # celeste moderno
+    "#61C0BF",  # aqua tendencia
+    "#F6AE2D",  # amarillo tendencia
+    "#F74B36",  # rojo corporativo
+    "#FFFFFF",  # blanco
+]
+
+st.set_page_config(
+    page_title="Dashboard Ejecutivo de Producción",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+st.title("📊 Dashboard Ejecutivo de Producción")
+st.subheader("Interactivo, visual y actualizado por supervisores")
+
+# --- Carga de archivo ---
+uploaded_file = st.file_uploader(
+    "Sube tu archivo Excel con datos de producción (estructura igual a la imagen)",
+    type=["xlsx", "xls"]
+)
+
+def clean_dataframe(df):
+    df.columns = df.columns.astype(str)
+    return df
+
+if uploaded_file:
+    df = pd.read_excel(uploaded_file, header=0)
+    df = clean_dataframe(df)
+    
+    # --- Sidebar para filtros ---
+    st.sidebar.header("Filtros")
+    fechas = [col for col in df.columns if '-' in col]
+    indicadores = df['Indicador'].dropna().unique().tolist()
+    
+    fecha_seleccionada = st.sidebar.multiselect("Selecciona fecha(s)", fechas, default=fechas)
+    indicador_seleccionado = st.sidebar.multiselect("Selecciona indicador(es)", indicadores, default=indicadores)
+    
+    # --- Data filtrada ---
+    df_filtrada = df[df['Indicador'].isin(indicador_seleccionado)]
+    df_filtrada = df_filtrada[['Indicador'] + fecha_seleccionada]
+    df_melt = df_filtrada.melt(id_vars="Indicador", var_name="Fecha", value_name="Valor")
+    
+    # --- KPIs de tendencia ---
+    st.markdown("### KPIs Resumidos")
+    col1, col2, col3, col4 = st.columns(4)
+    try:
+        entrada_real = df[df['Indicador'] == 'Entrada Real'][fechas].sum().sum()
+        salida_real = df[df['Indicador'] == 'Salida Real'][fechas].sum().sum()
+        wip_real = df[df['Indicador'] == 'WIP REAL (9AM)'][fechas].sum().sum()
+        gap_salida = df[df['Indicador'] == 'GAP Salida'][fechas].sum().sum()
+    except Exception:
+        entrada_real = salida_real = wip_real = gap_salida = 0
+    
+    col1.metric("🔵 Entrada Real", f"{entrada_real:,}")
+    col2.metric("🟢 Salida Real", f"{salida_real:,}")
+    col3.metric("🟡 WIP REAL (9AM)", f"{wip_real:,}")
+    col4.metric("🔴 GAP Salida", f"{gap_salida:,}")
+    
+    # --- Gráficos cool ---
+    st.markdown("### Gráficos Ejecutivos")
+    # Línea comparativa: Proyectado vs Real entrada/salida
+    proyectados = df_melt[df_melt['Indicador'].str.contains('Proyectada|Proyectado')]
+    reales = df_melt[df_melt['Indicador'].str.contains('Real')]
+    gap = df_melt[df_melt['Indicador'].str.contains('GAP')]
+    
+    fig_entrada = px.line(
+        df_melt[df_melt['Indicador'].str.contains('Entrada')],
+        x="Fecha", y="Valor", color="Indicador",
+        title="Entradas Proyectadas vs Reales",
+        color_discrete_sequence=CORPORATE_COLORS
+    )
+    st.plotly_chart(fig_entrada, use_container_width=True)
+    
+    fig_salida = px.line(
+        df_melt[df_melt['Indicador'].str.contains('Salida')],
+        x="Fecha", y="Valor", color="Indicador",
+        title="Salidas Proyectadas vs Reales",
+        color_discrete_sequence=CORPORATE_COLORS
+    )
+    st.plotly_chart(fig_salida, use_container_width=True)
+    
+    fig_wip = px.bar(
+        df_melt[df_melt['Indicador'].str.contains('WIP')],
+        x="Fecha", y="Valor", color="Indicador",
+        title="WIP Proyectado y Real",
+        color_discrete_sequence=CORPORATE_COLORS
+    )
+    st.plotly_chart(fig_wip, use_container_width=True)
+    
+    # GAP gráfico
+    fig_gap = px.area(
+        gap,
+        x="Fecha", y="Valor", color="Indicador",
+        title="GAP Salida y WIP",
+        color_discrete_sequence=CORPORATE_COLORS
+    )
+    st.plotly_chart(fig_gap, use_container_width=True)
+    
+    st.markdown("#### Tabla de Datos Filtrados")
+    st.dataframe(df_filtrada, use_container_width=True)
+    
+    st.success("Dashboard actualizado con el archivo subido. ¡Tus supervisores verán lo último!")
+else:
+    st.info("Sube el archivo Excel para ver el dashboard en línea.")
+
+# --- Footer corporativo ---
+st.markdown("""
+<style>
+footer {visibility: hidden;}
+</style>
+<div style='text-align: right; color: #1F2A56; font-size: 14px;'>
+    <b>© 2025 Dashboard Ejecutivo | Industria 4.0 | Powered by Streamlit</b>
+</div>
+""", unsafe_allow_html=True)
