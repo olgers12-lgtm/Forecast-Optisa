@@ -17,11 +17,10 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-SHEET_ID = "1U3DwxRVqQFwuPUs0-zvmitgz_LWdhScy-3fu-awBOHU"     # <-- Pon aquí el ID de tu Google Sheet
-SHEET_NAME = "Dia a Dia"              # <-- Nombre de la hoja/tab
+SHEET_ID = "1U3DwxRVqQFwuPUs0-zvmitgz_LWdhScy-3fu-awBOHU"     # <-- Tu ID de Google Sheet
+SHEET_NAME = "Produccion"                                     # <-- Nombre de la hoja/tab
 
 def cargar_gsheet(sheet_id, sheet_name):
-    # Lee credenciales desde secrets
     service_account_info = json.loads(st.secrets["GCP_SERVICE_ACCOUNT_JSON"])
     scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
     credentials = ServiceAccountCredentials.from_json_keyfile_dict(service_account_info, scope)
