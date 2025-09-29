@@ -1,5 +1,3 @@
-# Detectar el usuario logueado (puedes obtenerlo de secrets, de cookies, o hardcodear)
-st.session_state["user_login"] = "olgers12-lgtm"  # Cambia esto a tu lógica real si es necesario
 import streamlit as st
 import pandas as pd
 
