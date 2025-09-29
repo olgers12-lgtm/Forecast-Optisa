@@ -9,17 +9,7 @@ import json
 import streamlit as st
 import json
 
-# Debug: imprime la clave y chequea si se puede cargar como JSON
-st.write("Keys disponibles:", st.secrets.keys())
 
-try:
-    info = json.loads(st.secrets["GCP_SERVICE_ACCOUNT_JSON"])
-    st.write("JSON cargado correctamente:", info)
-except Exception as e:
-    st.error(f"Error al cargar el JSON: {e}")
-CORPORATE_COLORS = [
-    "#1F2A56", "#0D8ABC", "#3EC0ED", "#61C0BF", "#F6AE2D", "#F74B36"
-]
 
 st.set_page_config(
     page_title="Dashboard Ejecutivo de Producción",
