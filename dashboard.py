@@ -13,9 +13,8 @@ CORPORATE_COLORS = [
     "#1F2A56", "#0D8ABC", "#3EC0ED", "#61C0BF", "#F6AE2D", "#F74B36"
 ]
 
-# CONFIGURA ID DE TU SHEET Y NOMBRE DE LA HOJA
 SHEET_ID = "1U3DwxRVqQFwuPUs0-zvmitgz_LWdhScy-3fu-awBOHU"
-SHEET_NAME = "Produccion"  # Cambia si tu hoja/tab tiene otro nombre
+SHEET_NAME = "Produccion"
 
 @st.cache_data(ttl=600)
 def cargar_datos(sheet_id, sheet_name):
@@ -34,10 +33,21 @@ try:
     st.success("✅ Datos cargados correctamente.")
     st.dataframe(df.head(), use_container_width=True)
 
-    # --- INTERACTIVIDAD Y KPIs ---
-    indicadores = df['Indicador'].unique().tolist()
-    fechas = df.columns[2:]
+    # Detecta columnas no-fecha, no-'Indicador'
+    cols = df.columns.tolist()
+    fechas = [c for c in cols if c not in ("Indicador",) and not any(x in str(c).lower() for x in ["indicador"])]
+    posibles_id_vars = [c for c in cols if c not in fechas]
+    # Asegura 'Indicador' está presente
+    id_vars = [c for c in posibles_id_vars if "indicador" in c.lower()]
+    # Si hay otra columna extra, la añade
+    otras = [c for c in posibles_id_vars if c not in id_vars]
+    id_vars = id_vars + otras
 
+    st.write("Columnas del DataFrame:", cols)
+    st.write("id_vars usados para melt:", id_vars)
+    st.write("Columnas de fechas:", fechas)
+
+    indicadores = df[id_vars[0]].unique().tolist()
     indicador_sel = st.multiselect("Selecciona uno o más indicadores para analizar:", indicadores, default=indicadores)
     rango_fechas = st.slider(
         "Selecciona el rango de fechas:",
@@ -47,28 +57,39 @@ try:
     )
     fechas_sel = fechas[rango_fechas[0]:rango_fechas[1]+1]
 
-    # --- FILTRADO ---
-    df_filtrado = df[df['Indicador'].isin(indicador_sel)]
-    df_melt = df_filtrado.melt(id_vars=['todo en Jobs', 'Indicador'], value_vars=fechas_sel, var_name='Fecha', value_name='Valor')
+    # FILTRADO por indicador
+    df_filtrado = df[df[id_vars[0]].isin(indicador_sel)]
+    df_melt = df_filtrado.melt(
+        id_vars=id_vars,
+        value_vars=fechas_sel,
+        var_name='Fecha',
+        value_name='Valor'
+    )
 
     # --- KPIs ---
     st.subheader("🔎 KPIs rápidos")
     kpi_cols = st.columns(len(indicador_sel))
     for i, ind in enumerate(indicador_sel):
-        data = df_melt[df_melt['Indicador'] == ind]['Valor']
-        kpi_cols[i].metric(
-            f"{ind}",
-            f"Total: {int(data.sum())}",
-            f"Prom: {data.mean():.1f} | Max: {int(data.max())} | Min: {int(data.min())}"
-        )
+        data = df_melt[df_melt[id_vars[0]] == ind]['Valor']
+        # Intenta convertir a numérico
+        data = pd.to_numeric(data, errors="coerce").dropna()
+        if not data.empty:
+            kpi_cols[i].metric(
+                f"{ind}",
+                f"Total: {int(data.sum())}",
+                f"Prom: {data.mean():.1f} | Max: {int(data.max())} | Min: {int(data.min())}"
+            )
+        else:
+            kpi_cols[i].metric(f"{ind}", "Sin datos numéricos", "")
 
     # --- GRAFICO INTERACTIVO ---
     st.subheader("📈 Evolución temporal")
     fig = go.Figure()
     for i, ind in enumerate(indicador_sel):
-        datos = df_melt[df_melt['Indicador'] == ind]
+        datos = df_melt[df_melt[id_vars[0]] == ind]
+        y = pd.to_numeric(datos['Valor'], errors="coerce")
         fig.add_trace(go.Scatter(
-            x=datos['Fecha'], y=datos['Valor'],
+            x=datos['Fecha'], y=y,
             mode='lines+markers',
             name=ind,
             line=dict(color=CORPORATE_COLORS[i % len(CORPORATE_COLORS)], width=3),
@@ -85,8 +106,9 @@ try:
 
     # --- HEATMAP ---
     st.subheader("🌡️ Heatmap de valores")
-    df_heatmap = df_filtrado.set_index('Indicador')[fechas_sel]
+    df_heatmap = df_filtrado.set_index(id_vars[0])[fechas_sel]
     import plotly.express as px
+    df_heatmap = df_heatmap.apply(pd.to_numeric, errors="coerce")
     fig_hm = px.imshow(
         df_heatmap,
         aspect="auto",
