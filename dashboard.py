@@ -5,6 +5,7 @@ import plotly.express as px
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import json
+from datetime import datetime
 
 st.set_page_config(page_title="📊 Dashboard Ejecutivo de Producción", layout="wide")
 st.title("📊 Dashboard Ejecutivo de Producción")
@@ -14,7 +15,6 @@ CORPORATE_COLORS = [
     "#1F2A56", "#0D8ABC", "#3EC0ED", "#61C0BF", "#F6AE2D", "#F74B36"
 ]
 WIP_THRESHOLD = 1200
-DEFAULT_YEAR = "2025"  # Cambia esto si tu sheet cambia de año
 
 SHEET_ID = "1U3DwxRVqQFwuPUs0-zvmitgz_LWdhScy-3fu-awBOHU"
 SHEET_NAME = "Produccion"
@@ -31,12 +31,29 @@ def cargar_datos(sheet_id, sheet_name):
     df = pd.DataFrame(data)
     return df
 
-# --- Función para agregar año a la etiqueta de fecha ---
-def agregar_ano(col, year=DEFAULT_YEAR):
+def detectar_ano_por_mes(col):
+    col = col.strip().lower()
     # Si ya tiene año, lo deja
     if "-" in col and col.count("-") == 2:
         return col
-    # Si es tipo '1-sept', lo convierte a '1-sept-2025'
+    # Obtiene año actual y anterior por contexto
+    hoy = datetime.today()
+    year_actual = hoy.year
+    # Si el mes es septiembre y estamos en octubre o adelante, toma año anterior
+    if "sept" in col:
+        # Si estamos en septiembre, octubre, noviembre, diciembre: asume año actual
+        if hoy.month <= 9:
+            year = year_actual
+        else:
+            year = year_actual - 1
+    elif "oct" in col:
+        year = year_actual
+    elif "nov" in col:
+        year = year_actual
+    elif "dic" in col:
+        year = year_actual
+    else:
+        year = year_actual
     return f"{col}-{year}"
 
 try:
@@ -57,12 +74,12 @@ try:
 
     # Detecta columnas de fecha (todas menos 'Indicador')
     fechas = [c for c in df.columns if c != col_indicador]
-    fechas_con_ano = [agregar_ano(f) for f in fechas]
+    fechas_con_ano = [detectar_ano_por_mes(f) for f in fechas]
 
     # Convierte las etiquetas a datetime sólo para validación
     fechas_dt = pd.to_datetime(fechas_con_ano, format="%d-%b-%Y", errors="coerce")
     fechas_validas = [fechas[i] for i in range(len(fechas_dt)) if not pd.isnull(fechas_dt[i])]
-    fechas_con_ano_validas = [agregar_ano(fechas[i]) for i in range(len(fechas_dt)) if not pd.isnull(fechas_dt[i])]
+    fechas_con_ano_validas = [detectar_ano_por_mes(fechas[i]) for i in range(len(fechas_dt)) if not pd.isnull(fechas_dt[i])]
     if not fechas_validas:
         st.warning("No hay columnas de fechas válidas. Revisar encabezados y formato de fechas.")
         st.stop()
@@ -78,8 +95,8 @@ try:
         var_name='Fecha',
         value_name='Valor'
     )
-    # Crea columna Fecha_dt usando agregar_ano y convierte a datetime
-    df_melt["Fecha_dt"] = pd.to_datetime(df_melt["Fecha"].apply(agregar_ano), format="%d-%b-%Y", errors="coerce")
+    # Crea columna Fecha_dt usando detectar_ano_por_mes y convierte a datetime
+    df_melt["Fecha_dt"] = pd.to_datetime(df_melt["Fecha"].apply(detectar_ano_por_mes), format="%d-%b-%Y", errors="coerce")
     df_melt["Valor"] = pd.to_numeric(df_melt["Valor"], errors="coerce")
     df_melt = df_melt.dropna(subset=["Fecha_dt"])
 
