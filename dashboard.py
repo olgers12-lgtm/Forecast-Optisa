@@ -99,7 +99,6 @@ with st.sidebar:
         df_melt["SemanaISO"] = df_melt["Fecha_dt"].dt.isocalendar().week
         df_melt["AñoISO"] = df_melt["Fecha_dt"].dt.isocalendar().year
         semanas_unicas = sorted(df_melt[["AñoISO", "SemanaISO"]].drop_duplicates().values.tolist())
-        # Etiquetas visuales
         semana_labels = []
         for year, week in semanas_unicas:
             semana_df = df_melt[(df_melt["AñoISO"] == year) & (df_melt["SemanaISO"] == week)]
@@ -130,45 +129,46 @@ with st.sidebar:
 
 df_filtrado_fecha = df_melt[mask_fecha]
 
-# --- KPIs productivos y Delta vs periodo anterior ---
+# --- KPIs industriales ajustados ---
 st.subheader("🧮 KPIs Industriales")
-col1, col2, col3, col4, col5 = st.columns(5)
-try:
-    entrada_real = df_filtrado_fecha[df_filtrado_fecha[col_indicador].str.lower().str.contains("entrada real")]['Valor'].sum()
-    salida_real = df_filtrado_fecha[df_filtrado_fecha[col_indicador].str.lower().str.contains("salida real")]['Valor'].sum()
-    salida_proj = df_filtrado_fecha[df_filtrado_fecha[col_indicador].str.lower().str.contains("salida proyectada")]['Valor'].sum()
-    eficiencia = salida_real / salida_proj * 100 if salida_proj > 0 else None
-    wip = df_filtrado_fecha[df_filtrado_fecha[col_indicador].str.lower().str.contains("wip")]['Valor']
-    wip_delta = wip.iloc[-1] - wip.iloc[0] if len(wip) > 1 else 0
+col1, col2, col3, col4 = st.columns(4)
 
-    # Deltas vs periodo anterior
-    prev_mask = df_melt["Fecha_dt"] < df_filtrado_fecha["Fecha_dt"].min()
-    prev_df = df_melt[prev_mask]
-    entrada_real_prev = prev_df[prev_df[col_indicador].str.lower().str.contains("entrada real")]['Valor'].sum()
-    salida_real_prev = prev_df[prev_df[col_indicador].str.lower().str.contains("salida real")]['Valor'].sum()
-    eficiencia_prev = salida_real_prev / salida_proj * 100 if salida_proj > 0 else None
+entrada_real = df_filtrado_fecha[df_filtrado_fecha[col_indicador].str.lower().str.contains("entrada real")]['Valor'].sum()
+entrada_proj = df_filtrado_fecha[df_filtrado_fecha[col_indicador].str.lower().str.contains("entrada-proyectada")]['Valor'].sum()
+salida_real = df_filtrado_fecha[df_filtrado_fecha[col_indicador].str.lower().str.contains("salida real")]['Valor'].sum()
+salida_proj = df_filtrado_fecha[df_filtrado_fecha[col_indicador].str.lower().str.contains("salida proyectada")]['Valor'].sum()
+wip = df_filtrado_fecha[df_filtrado_fecha[col_indicador].str.lower().str.contains("wip")]['Valor']
 
-    delta_entrada = entrada_real - entrada_real_prev
-    delta_salida = salida_real - salida_real_prev
-    delta_ef = eficiencia - eficiencia_prev if eficiencia and eficiencia_prev else None
+delta_entrada = entrada_real - entrada_proj if entrada_proj else None
+delta_salida = salida_real - salida_proj if salida_proj else None
+eficiencia = salida_real / salida_proj * 100 if salida_proj > 0 else None
 
-    col1.metric("Entrada Real", f"{int(entrada_real)}", f"{delta_entrada:+}")
-    col2.metric("Salida Real", f"{int(salida_real)}", f"{delta_salida:+}")
-    col3.metric("Eficiencia (%)", f"{eficiencia:.1f}%" if eficiencia else "-", f"{delta_ef:+.1f}%" if delta_ef else "-")
-    if not wip.empty and pd.notnull(wip.mean()):
-        col4.metric("WIP Promedio", f"{wip.mean():.1f}")
-        col5.metric("WIP Delta", f"{wip_delta:+}")
-    else:
-        col4.metric("WIP Promedio", "-", "Sin datos")
-        col5.metric("WIP Delta", "-", "Sin datos")
-    if eficiencia and eficiencia < EFFICIENCY_GOAL:
-        st.error(f"⚠️ Eficiencia debajo del objetivo ({EFFICIENCY_GOAL}%)")
-    if not wip.empty and wip.max() > WIP_THRESHOLDS["Crítico"]:
-        st.error(f"🚨 WIP crítico: {int(wip.max())} (lim. {WIP_THRESHOLDS['Crítico']})")
-    elif not wip.empty and wip.max() > WIP_THRESHOLDS["Alerta"]:
-        st.warning(f"⚠️ WIP en alerta: {int(wip.max())} (lim. {WIP_THRESHOLDS['Alerta']})")
-except Exception as e:
-    st.warning(f"No se pueden calcular KPIs: {e}")
+col1.metric(
+    "Entrada Real",
+    f"{int(entrada_real)}",
+    f"{delta_entrada:.1f}" if delta_entrada is not None else "-",
+    delta_color="inverse" if delta_entrada is not None and delta_entrada < 0 else "normal"
+)
+col2.metric(
+    "Salida Real",
+    f"{int(salida_real)}",
+    f"{delta_salida:.1f}" if delta_salida is not None else "-",
+    delta_color="inverse" if delta_salida is not None and delta_salida < 0 else "normal"
+)
+col3.metric(
+    "Eficiencia (%)",
+    f"{eficiencia:.1f}%" if eficiencia else "-",
+    delta_color="inverse" if eficiencia and eficiencia < EFFICIENCY_GOAL else "normal"
+)
+if not wip.empty and pd.notnull(wip.mean()):
+    col4.metric("WIP Promedio", f"{wip.mean():.1f}")
+else:
+    col4.metric("WIP Promedio", "-", "Sin datos")
+
+if not wip.empty and wip.max() > WIP_THRESHOLDS["Crítico"]:
+    st.error(f"🚨 WIP crítico: {int(wip.max())} (lim. {WIP_THRESHOLDS['Crítico']})")
+elif not wip.empty and wip.max() > WIP_THRESHOLDS["Alerta"]:
+    st.warning(f"⚠️ WIP en alerta: {int(wip.max())} (lim. {WIP_THRESHOLDS['Alerta']})")
 
 # --- Visualización avanzada ---
 st.subheader("📊 Evolución y Heatmap WIP")
@@ -177,7 +177,9 @@ for i, ind in enumerate(indicador_sel):
     data = df_filtrado_fecha[df_filtrado_fecha[col_indicador] == ind].sort_values("Fecha_dt")
     if not data.empty:
         fig.add_trace(go.Scatter(
-            x=data["Fecha_dt"], y=data["Valor"],
+            # Solo fecha, sin hora
+            x=data["Fecha_dt"].dt.strftime("%d-%b"),
+            y=data["Valor"],
             mode='lines+markers',
             name=ind,
             line=dict(color=CORPORATE_COLORS[i % len(CORPORATE_COLORS)], width=3),
