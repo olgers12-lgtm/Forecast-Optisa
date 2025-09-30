@@ -5,6 +5,7 @@ import plotly.express as px
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import json
+import re
 
 st.set_page_config(page_title="📊 Dashboard Ejecutivo de Producción", layout="wide")
 st.title("📊 Dashboard Ejecutivo de Producción")
@@ -32,19 +33,19 @@ def cargar_datos(sheet_id, sheet_name):
 
 def agregar_ano(col):
     col = col.strip().lower()
+    match = re.match(r"(\d{1,2})-(sept|oct)", col)
+    if match:
+        num, mes = match.groups()
+        year = "2025"
+        mes_map = {"sept": "09", "oct": "10"}
+        return f"{year}-{mes_map[mes]}-{int(num):02d}"
     if "-" in col and col.count("-") == 2:
         return col
-    # Septiembre y octubre SIEMPRE 2025
-    if "sept" in col or "oct" in col:
-        year = "2025"
-    else:
-        year = "2025"
-    return f"{col}-{year}"
+    return None
 
 try:
     df = cargar_datos(SHEET_ID, SHEET_NAME)
 
-    # Detecta columna Indicador
     col_indicador = None
     for c in df.columns:
         if "indicador" in c.lower():
@@ -56,10 +57,10 @@ try:
 
     df = df[df[col_indicador].notnull() & (df[col_indicador] != '')]
 
-    # Detecta columnas de fecha (todas menos 'Indicador')
     fechas = [c for c in df.columns if c != col_indicador]
-    fechas_dt = [pd.to_datetime(agregar_ano(f), format="%d-%b-%Y", errors="coerce") for f in fechas]
-    fechas_validas = [fechas[i] for i in range(len(fechas)) if not pd.isnull(fechas_dt[i])]
+    fechas_dt = [agregar_ano(f) for f in fechas]
+    fechas_validas = [fechas[i] for i in range(len(fechas)) if fechas_dt[i] is not None]
+    fechas_dt_validas = [f for f in fechas_dt if f is not None]
 
     indicadores = df[col_indicador].unique().tolist()
     indicador_sel = st.multiselect("Selecciona uno o más indicadores para analizar:", indicadores, default=indicadores)
@@ -70,7 +71,7 @@ try:
         var_name='Fecha',
         value_name='Valor'
     )
-    df_melt["Fecha_dt"] = pd.to_datetime(df_melt["Fecha"].apply(agregar_ano), format="%d-%b-%Y", errors="coerce")
+    df_melt["Fecha_dt"] = pd.to_datetime(df_melt["Fecha"].apply(agregar_ano), format="%Y-%m-%d", errors="coerce")
     df_melt["Valor"] = pd.to_numeric(df_melt["Valor"], errors="coerce")
     df_melt = df_melt.dropna(subset=["Fecha_dt"])
 
@@ -162,7 +163,7 @@ try:
     if wip_inds and not df_filtrado_fecha.empty:
         try:
             df_wip = df_filtrado_fecha[df_filtrado_fecha[col_indicador].isin(wip_inds)].copy()
-            df_wip["Fecha_dt"] = pd.to_datetime(df_wip["Fecha"].apply(agregar_ano), format="%d-%b-%Y", errors="coerce")
+            df_wip["Fecha_dt"] = pd.to_datetime(df_wip["Fecha"].apply(agregar_ano), format="%Y-%m-%d", errors="coerce")
             df_wip = df_wip.sort_values("Fecha_dt")
             df_wip_pivot = df_wip.pivot(index=col_indicador, columns="Fecha_dt", values="Valor")
             df_wip_pivot = df_wip_pivot.sort_index(axis=1)
