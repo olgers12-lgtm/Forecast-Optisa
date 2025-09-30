@@ -81,7 +81,6 @@ with st.sidebar:
         ],
         horizontal=False
     )
-    # Filtro de días con calendar picker
     if "Día" in filtro_tipo:
         fechas_disponibles = sorted(df_melt["Fecha_dt"].dt.date.unique())
         fechas_sel = st.date_input(
@@ -95,25 +94,29 @@ with st.sidebar:
             mask_fecha = df_melt["Fecha_dt"].dt.date.isin(fechas_sel)
         else:
             mask_fecha = df_melt["Fecha_dt"].dt.date == fechas_sel
-    # Filtro de semanas con resumen visual
     elif "Semana" in filtro_tipo:
-        df_melt["AñoSemana"] = df_melt["Fecha_dt"].dt.strftime("W%U %Y")
-        semanas_disponibles = sorted(df_melt["AñoSemana"].unique())
-        def semana_label(x):
-            semana_df = df_melt[df_melt['AñoSemana'] == x]
-            return f"{x} ({semana_df['Fecha_dt'].min().strftime('%d-%b')} - {semana_df['Fecha_dt'].max().strftime('%d-%b')})"
-        semana_sel = st.selectbox(
+        # Semana ISO y año
+        df_melt["SemanaISO"] = df_melt["Fecha_dt"].dt.isocalendar().week
+        df_melt["AñoISO"] = df_melt["Fecha_dt"].dt.isocalendar().year
+        semanas_unicas = sorted(df_melt[["AñoISO", "SemanaISO"]].drop_duplicates().values.tolist())
+        # Etiquetas visuales
+        semana_labels = []
+        for year, week in semanas_unicas:
+            semana_df = df_melt[(df_melt["AñoISO"] == year) & (df_melt["SemanaISO"] == week)]
+            fecha_ini = semana_df["Fecha_dt"].min().strftime("%d-%b")
+            fecha_fin = semana_df["Fecha_dt"].max().strftime("%d-%b")
+            semana_labels.append(f"Semana {week} ({fecha_ini} - {fecha_fin})")
+        semana_sel_idx = st.selectbox(
             "Selecciona semana:",
-            options=semanas_disponibles,
-            format_func=semana_label
+            options=range(len(semanas_unicas)),
+            format_func=lambda i: semana_labels[i]
         )
-        mask_fecha = df_melt["AñoSemana"] == semana_sel
-    # Filtro de meses visual con badge
+        year_sel, week_sel = semanas_unicas[semana_sel_idx]
+        mask_fecha = (df_melt["AñoISO"] == year_sel) & (df_melt["SemanaISO"] == week_sel)
     elif "Mes" in filtro_tipo:
         meses_disponibles = sorted(df_melt["Fecha_dt"].dt.strftime("%B %Y").unique())
         mes_sel = st.selectbox("Selecciona mes:", options=meses_disponibles)
         mask_fecha = df_melt["Fecha_dt"].dt.strftime("%B %Y") == mes_sel
-    # Filtro de rango personalizado con calendar
     else:
         fecha_min, fecha_max = df_melt["Fecha_dt"].min(), df_melt["Fecha_dt"].max()
         fecha_inicio, fecha_fin = st.date_input(
