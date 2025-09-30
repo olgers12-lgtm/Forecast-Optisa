@@ -63,7 +63,6 @@ df = df[df[col_indicador].notnull() & (df[col_indicador] != '')]
 fechas = [c for c in df.columns if c != col_indicador]
 fechas_dt = [agregar_ano(f) for f in fechas]
 fechas_validas = [fechas[i] for i in range(len(fechas)) if fechas_dt[i] is not None]
-fechas_dt_validas = [f for f in fechas_dt if f is not None]
 
 indicadores = df[col_indicador].unique().tolist()
 indicador_sel = st.multiselect(
@@ -108,12 +107,12 @@ with st.sidebar:
         df_melt["AñoISO"] = df_melt["Fecha_dt"].dt.isocalendar().year
         semanas_unicas = sorted(df_melt[["AñoISO", "SemanaISO"]].drop_duplicates().values.tolist())
         semana_labels = [
-            f"<span style='color:#0D8ABC;font-weight:bold;'>Semana {week}</span><span style='color:#555;'> ({df_melt[(df_melt['AñoISO'] == year) & (df_melt['SemanaISO'] == week)]['Fecha_dt'].min().strftime('%d-%b')} - {df_melt[(df_melt['AñoISO'] == year) & (df_melt['SemanaISO'] == week)]['Fecha_dt'].max().strftime('%d-%b')})</span>"
+            f"Semana {week} ({df_melt[(df_melt['AñoISO'] == year) & (df_melt['SemanaISO'] == week)]['Fecha_dt'].min().strftime('%d-%b')} - {df_melt[(df_melt['AñoISO'] == year) & (df_melt['SemanaISO'] == week)]['Fecha_dt'].max().strftime('%d-%b')})"
             for year, week in semanas_unicas
         ]
         semana_sel_idx = st.selectbox(
             "Selecciona semana:", options=range(len(semanas_unicas)),
-            format_func=lambda i: f"Semana {semanas_unicas[i][1]} ({df_melt[(df_melt['AñoISO'] == semanas_unicas[i][0]) & (df_melt['SemanaISO'] == semanas_unicas[i][1])]['Fecha_dt'].min().strftime('%d-%b')} - {df_melt[(df_melt['AñoISO'] == semanas_unicas[i][0]) & (df_melt['SemanaISO'] == semanas_unicas[i][1])]['Fecha_dt'].max().strftime('%d-%b')})"
+            format_func=lambda i: semana_labels[i]
         )
         year_sel, week_sel = semanas_unicas[semana_sel_idx]
         mask_fecha = (df_melt["AñoISO"] == year_sel) & (df_melt["SemanaISO"] == week_sel)
@@ -144,7 +143,6 @@ salida_real = df_filtrado_fecha[df_filtrado_fecha[col_indicador].str.lower().str
 salida_proj = df_filtrado_fecha[df_filtrado_fecha[col_indicador].str.lower().str.contains("salida proyectada")]['Valor'].sum()
 wip = df_filtrado_fecha[df_filtrado_fecha[col_indicador].str.lower().str.contains("wip")]['Valor']
 
-# Delta vs Proyectado
 delta_entrada = entrada_real - entrada_proj if entrada_proj else None
 delta_salida = salida_real - salida_proj if salida_proj else None
 eficiencia = salida_real / salida_proj * 100 if salida_proj > 0 else None
@@ -251,7 +249,7 @@ fig.update_layout(
 )
 st.plotly_chart(fig, use_container_width=True)
 
-# --- Heatmap WIP cool ---
+# --- Heatmap WIP profesional y leyenda ---
 wip_inds = [w for w in indicador_sel if "wip" in w.lower()]
 if wip_inds and not df_filtrado_fecha.empty:
     df_wip = df_filtrado_fecha[df_filtrado_fecha[col_indicador].isin(wip_inds)].copy()
@@ -259,9 +257,13 @@ if wip_inds and not df_filtrado_fecha.empty:
     df_wip_pivot = df_wip.pivot(index=col_indicador, columns="Fecha_dt", values="Valor")
     df_wip_pivot = df_wip_pivot.sort_index(axis=1)
     colorscale = [
-        [0, "#A3FFAE"], [0.6, "#F6AE2D"], [0.9, "#F74B36"], [1, "#8B0000"]
+        [0.0, "#A3FFAE"],     # Verde hasta 800
+        [0.53, "#F6F658"],    # Amarillo (~800)
+        [0.75, "#F6AE2D"],    # Naranja (~1200)
+        [0.92, "#F74B36"],    # Rojo claro
+        [1.0, "#8B0000"]      # Rojo oscuro crítico
     ]
-    vmax = max(WIP_THRESHOLDS["Crítico"] + 200, float(df_wip_pivot.max().max() if not df_wip_pivot.empty else 0))
+    vmax = max(1500, float(df_wip_pivot.max().max() if not df_wip_pivot.empty else 0))
     fig_hm = px.imshow(
         df_wip_pivot,
         aspect="auto",
@@ -281,6 +283,16 @@ if wip_inds and not df_filtrado_fecha.empty:
     )
     st.markdown("<h2 style='color:#61C0BF'>🌡️ Heatmap WIP</h2>", unsafe_allow_html=True)
     st.plotly_chart(fig_hm, use_container_width=True)
+    # Leyenda visual de colores/rangos
+    st.markdown("""
+<div style='display:flex;flex-wrap:wrap;gap:18px;margin-top:12px;'>
+  <div style='background:#A3FFAE;padding:8px 16px;border-radius:6px;font-weight:bold;'>WIP &lt; 800 (Óptimo)</div>
+  <div style='background:#F6F658;padding:8px 16px;border-radius:6px;font-weight:bold;'>WIP 800-1200 (Alerta)</div>
+  <div style='background:#F6AE2D;padding:8px 16px;border-radius:6px;font-weight:bold;color:#222;'>WIP 1200-1380 (Naranja)</div>
+  <div style='background:#F74B36;padding:8px 16px;border-radius:6px;font-weight:bold;color:#fff;'>WIP 1380-1500 (Rojo)</div>
+  <div style='background:#8B0000;padding:8px 16px;border-radius:6px;font-weight:bold;color:#fff;'>WIP &gt; 1500 (Crítico)</div>
+</div>
+""", unsafe_allow_html=True)
 else:
     st.info("Selecciona un indicador WIP y rango de fechas válido para ver el heatmap.")
 
