@@ -68,26 +68,62 @@ df_melt["Fecha_dt"] = pd.to_datetime(df_melt["Fecha"].apply(agregar_ano), format
 df_melt["Valor"] = pd.to_numeric(df_melt["Valor"], errors="coerce")
 df_melt = df_melt.dropna(subset=["Fecha_dt"])
 
-# --- Filtros avanzados ---
-agrupamiento = st.radio("Agrupar por:", ["Día", "Semana (L-D)", "Mes", "Rango personalizado"], horizontal=True)
-mask_fecha = pd.Series([True] * len(df_melt))
-if agrupamiento == "Día":
-    fechas_unicas = df_melt["Fecha_dt"].dt.strftime("%d-%b-%Y").dropna().unique().tolist()
-    fechas_unicas = sorted(fechas_unicas, key=lambda x: pd.to_datetime(x, format="%d-%b-%Y"))
-    fechas_sel = st.multiselect("Selecciona días:", fechas_unicas, default=fechas_unicas[-7:])
-    mask_fecha = df_melt["Fecha_dt"].dt.strftime("%d-%b-%Y").isin(fechas_sel)
-elif agrupamiento == "Semana (L-D)":
-    semanas_disponibles = sorted(df_melt["Fecha_dt"].dt.isocalendar().week.dropna().unique())
-    semana_sel = st.select_slider("Selecciona semana:", options=semanas_disponibles, value=semanas_disponibles[-1] if semanas_disponibles else None)
-    mask_fecha = df_melt["Fecha_dt"].dt.isocalendar().week == semana_sel
-elif agrupamiento == "Mes":
-    meses_disponibles = sorted(df_melt["Fecha_dt"].dt.strftime("%B %Y").dropna().unique())
-    mes_sel = st.selectbox("Selecciona mes:", options=meses_disponibles, index=len(meses_disponibles)-1 if meses_disponibles else 0)
-    mask_fecha = df_melt["Fecha_dt"].dt.strftime("%B %Y") == mes_sel
-else:
-    fecha_min, fecha_max = df_melt["Fecha_dt"].min(), df_melt["Fecha_dt"].max()
-    fecha_inicio, fecha_fin = st.date_input("Rango de fechas:", [fecha_max - pd.Timedelta(days=14), fecha_max])
-    mask_fecha = (df_melt["Fecha_dt"] >= pd.to_datetime(fecha_inicio)) & (df_melt["Fecha_dt"] <= pd.to_datetime(fecha_fin))
+# --- Panel de filtros moderno y estético ---
+with st.sidebar:
+    st.header("📅 Filtros de fechas")
+    filtro_tipo = st.radio(
+        "Agrupar por:",
+        [
+            "🗓️ Día",
+            "📆 Semana",
+            "🗓️ Mes",
+            "🎯 Rango personalizado"
+        ],
+        horizontal=False
+    )
+    # Filtro de días con calendar picker
+    if "Día" in filtro_tipo:
+        fechas_disponibles = sorted(df_melt["Fecha_dt"].dt.date.unique())
+        fechas_sel = st.date_input(
+            "Selecciona uno o más días:",
+            value=fechas_disponibles[-1],
+            min_value=min(fechas_disponibles),
+            max_value=max(fechas_disponibles),
+            format="DD/MM/YYYY"
+        )
+        if isinstance(fechas_sel, list):
+            mask_fecha = df_melt["Fecha_dt"].dt.date.isin(fechas_sel)
+        else:
+            mask_fecha = df_melt["Fecha_dt"].dt.date == fechas_sel
+    # Filtro de semanas con resumen visual
+    elif "Semana" in filtro_tipo:
+        df_melt["AñoSemana"] = df_melt["Fecha_dt"].dt.strftime("W%U %Y")
+        semanas_disponibles = sorted(df_melt["AñoSemana"].unique())
+        def semana_label(x):
+            semana_df = df_melt[df_melt['AñoSemana'] == x]
+            return f"{x} ({semana_df['Fecha_dt'].min().strftime('%d-%b')} - {semana_df['Fecha_dt'].max().strftime('%d-%b')})"
+        semana_sel = st.selectbox(
+            "Selecciona semana:",
+            options=semanas_disponibles,
+            format_func=semana_label
+        )
+        mask_fecha = df_melt["AñoSemana"] == semana_sel
+    # Filtro de meses visual con badge
+    elif "Mes" in filtro_tipo:
+        meses_disponibles = sorted(df_melt["Fecha_dt"].dt.strftime("%B %Y").unique())
+        mes_sel = st.selectbox("Selecciona mes:", options=meses_disponibles)
+        mask_fecha = df_melt["Fecha_dt"].dt.strftime("%B %Y") == mes_sel
+    # Filtro de rango personalizado con calendar
+    else:
+        fecha_min, fecha_max = df_melt["Fecha_dt"].min(), df_melt["Fecha_dt"].max()
+        fecha_inicio, fecha_fin = st.date_input(
+            "Selecciona el rango de fechas:",
+            value=(fecha_max - pd.Timedelta(days=7), fecha_max),
+            min_value=fecha_min,
+            max_value=fecha_max,
+            format="DD/MM/YYYY"
+        )
+        mask_fecha = (df_melt["Fecha_dt"] >= pd.to_datetime(fecha_inicio)) & (df_melt["Fecha_dt"] <= pd.to_datetime(fecha_fin))
 
 df_filtrado_fecha = df_melt[mask_fecha]
 
