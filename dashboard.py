@@ -31,38 +31,21 @@ def cargar_datos(sheet_id, sheet_name):
     df = pd.DataFrame(data)
     return df
 
+# Función robusta para agregar año a la fecha (siempre 2025 para sept/oct en tu hoja actual)
 def agregar_ano(col):
-    """
-    Detecta el año de la columna de fecha automáticamente:
-    - Si la fecha es septiembre y la fecha actual es septiembre, asigna año actual.
-    - Si es octubre y la fecha actual es septiembre, asigna año actual.
-    - Si es octubre y la fecha actual es octubre o después, asigna año actual.
-    - Si es septiembre y la fecha actual es octubre o después, asigna año anterior.
-    """
     col = col.strip().lower()
     if "-" in col and col.count("-") == 2:
         return col
-    hoy = datetime.today()
-    year_actual = hoy.year
-    # Detecta mes en la etiqueta
-    if "sept" in col:
-        # Si es septiembre y hoy es octubre o después, usa año anterior
-        year = year_actual if hoy.month <= 9 else year_actual - 1
-    elif "oct" in col:
-        # Si es octubre, siempre usa año actual
-        year = year_actual
-    elif "nov" in col:
-        year = year_actual
-    elif "dic" in col:
-        year = year_actual
+    if "sept" in col or "oct" in col:
+        year = "2025"
     else:
-        year = year_actual
+        year = "2025"
     return f"{col}-{year}"
 
 try:
     df = cargar_datos(SHEET_ID, SHEET_NAME)
 
-    # Detección robusta de columna Indicador
+    # Detecta columna "Indicador"
     col_indicador = None
     for c in df.columns:
         if "indicador" in c.lower():
@@ -72,14 +55,12 @@ try:
         st.error("No se encontró columna 'Indicador'. Las columnas son: " + str(df.columns.tolist()))
         st.stop()
 
-    # Elimina filas vacías en columna clave
+    # Elimina filas vacías
     df = df[df[col_indicador].notnull() & (df[col_indicador] != '')]
 
-    # Detecta columnas de fecha (todas menos 'Indicador')
+    # Detecta columnas de fecha
     fechas = [c for c in df.columns if c != col_indicador]
     fechas_con_ano = [agregar_ano(f) for f in fechas]
-
-    # Convierte las etiquetas a datetime sólo para validación
     fechas_dt = pd.to_datetime(fechas_con_ano, format="%d-%b-%Y", errors="coerce")
     fechas_validas = [fechas[i] for i in range(len(fechas_dt)) if not pd.isnull(fechas_dt[i])]
     fechas_con_ano_validas = [agregar_ano(fechas[i]) for i in range(len(fechas_dt)) if not pd.isnull(fechas_dt[i])]
@@ -91,21 +72,19 @@ try:
     indicadores = df[col_indicador].unique().tolist()
     indicador_sel = st.multiselect("Selecciona uno o más indicadores para analizar:", indicadores, default=indicadores)
 
-    # Transforma a formato largo, con las fechas originales
+    # Melt largo
     df_melt = df[df[col_indicador].isin(indicador_sel)].melt(
         id_vars=[col_indicador],
         value_vars=fechas_validas,
         var_name='Fecha',
         value_name='Valor'
     )
-    # Crea columna Fecha_dt usando agregar_ano y convierte a datetime
     df_melt["Fecha_dt"] = pd.to_datetime(df_melt["Fecha"].apply(agregar_ano), format="%d-%b-%Y", errors="coerce")
     df_melt["Valor"] = pd.to_numeric(df_melt["Valor"], errors="coerce")
     df_melt = df_melt.dropna(subset=["Fecha_dt"])
 
-    # Filtros de fechas robustos
+    # Filtros de fechas
     agrupamiento = st.radio("Agrupar por:", ["Día", "Semana (L-D)", "Mes", "Rango personalizado"], horizontal=True)
-
     mask_fecha = pd.Series([True] * len(df_melt))
     if agrupamiento == "Día":
         fechas_unicas = df_melt["Fecha_dt"].dt.strftime("%d-%b-%Y").dropna().unique().tolist()
@@ -131,7 +110,7 @@ try:
         else:
             st.warning("No hay meses válidos para mostrar.")
             mask_fecha = pd.Series([False] * len(df_melt))
-    else:  # Rango personalizado
+    else:
         fecha_min, fecha_max = df_melt["Fecha_dt"].min(), df_melt["Fecha_dt"].max()
         fecha_inicio, fecha_fin = st.date_input("Rango de fechas:", [fecha_max - pd.Timedelta(days=14), fecha_max])
         mask_fecha = (df_melt["Fecha_dt"] >= pd.to_datetime(fecha_inicio)) & (df_melt["Fecha_dt"] <= pd.to_datetime(fecha_fin))
@@ -142,46 +121,50 @@ try:
     st.subheader("🔢 KPIs industriales")
     col1, col2, col3, col4 = st.columns(4)
     try:
-        entrada_proj = df_filtrado_fecha[df_filtrado_fecha[col_indicador].str.lower().str.contains("entrada-proyectada")]['Valor'].sum()
-        entrada_real = df_filtrado_fecha[df_filtrado_fecha[col_indicador].str.lower().str.contains("entrada real")]['Valor'].sum()
-        salida_proj = df_filtrado_fecha[df_filtrado_fecha[col_indicador].str.lower().str.contains("salida proyectada")]['Valor'].sum()
-        salida_real = df_filtrado_fecha[df_filtrado_fecha[col_indicador].str.lower().str.contains("salida real")]['Valor'].sum()
-        wip = df_filtrado_fecha[df_filtrado_fecha[col_indicador].str.lower().str.contains("wip")]['Valor']
-        eficiencia = salida_real / salida_proj * 100 if salida_proj > 0 else None
+        if not df_filtrado_fecha.empty:
+            entrada_proj = df_filtrado_fecha[df_filtrado_fecha[col_indicador].str.lower().str.contains("entrada-proyectada")]['Valor'].sum()
+            entrada_real = df_filtrado_fecha[df_filtrado_fecha[col_indicador].str.lower().str.contains("entrada real")]['Valor'].sum()
+            salida_proj = df_filtrado_fecha[df_filtrado_fecha[col_indicador].str.lower().str.contains("salida proyectada")]['Valor'].sum()
+            salida_real = df_filtrado_fecha[df_filtrado_fecha[col_indicador].str.lower().str.contains("salida real")]['Valor'].sum()
+            wip = df_filtrado_fecha[df_filtrado_fecha[col_indicador].str.lower().str.contains("wip")]['Valor']
+            eficiencia = salida_real / salida_proj * 100 if salida_proj > 0 else None
 
-        col1.metric("Total Entrada Real", f"{int(entrada_real)}")
-        col2.metric("Total Salida Real", f"{int(salida_real)}")
-        col3.metric("Eficiencia Salida (%)", f"{eficiencia:.1f}%" if eficiencia else "-")
-        if not wip.empty:
-            wip_prom = wip.mean()
-            wip_max = wip.max()
-            col4.metric("WIP Promedio", f"{wip_prom:.1f}", f"Max: {int(wip_max)}", delta_color="inverse" if wip_max > WIP_THRESHOLD else "normal")
+            col1.metric("Total Entrada Real", f"{int(entrada_real) if pd.notnull(entrada_real) else '-'}")
+            col2.metric("Total Salida Real", f"{int(salida_real) if pd.notnull(salida_real) else '-'}")
+            col3.metric("Eficiencia Salida (%)", f"{eficiencia:.1f}%" if eficiencia else "-")
+            if not wip.empty and pd.notnull(wip.mean()):
+                wip_prom = wip.mean()
+                wip_max = wip.max()
+                col4.metric("WIP Promedio", f"{wip_prom:.1f}", f"Max: {int(wip_max)}", delta_color="inverse" if wip_max > WIP_THRESHOLD else "normal")
+            else:
+                col4.metric("WIP Promedio", "-", "Sin datos")
         else:
-            col4.metric("WIP Promedio", "-", "Sin datos")
+            st.warning("No hay datos filtrados para mostrar KPIs.")
     except Exception as e:
         st.warning(f"KPIs industriales no disponibles. Error: {e}")
 
     # Gráfico interactivo
     st.subheader("📈 Evolución temporal")
     try:
-        fig = go.Figure()
-        for i, ind in enumerate(indicador_sel):
-            data = df_filtrado_fecha[df_filtrado_fecha[col_indicador] == ind].sort_values("Fecha_dt")
-            fig.add_trace(go.Scatter(
-                x=data["Fecha_dt"], y=data["Valor"],
-                mode='lines+markers',
-                name=ind,
-                line=dict(color=CORPORATE_COLORS[i % len(CORPORATE_COLORS)], width=3),
-                marker=dict(size=8)
-            ))
-        fig.update_layout(
-            xaxis_title="Fecha",
-            yaxis_title="Valor",
-            legend_title="Indicador",
-            hovermode="x unified",
-            template="plotly_white"
-        )
-        st.plotly_chart(fig, use_container_width=True)
+        if not df_filtrado_fecha.empty:
+            fig = go.Figure()
+            for i, ind in enumerate(indicador_sel):
+                data = df_filtrado_fecha[df_filtrado_fecha[col_indicador] == ind].sort_values("Fecha_dt")
+                fig.add_trace(go.Scatter(
+                    x=data["Fecha_dt"], y=data["Valor"],
+                    mode='lines+markers',
+                    name=ind,
+                    line=dict(color=CORPORATE_COLORS[i % len(CORPORATE_COLORS)], width=3),
+                    marker=dict(size=8)
+                ))
+            fig.update_layout(
+                xaxis_title="Fecha",
+                yaxis_title="Valor",
+                legend_title="Indicador",
+                hovermode="x unified",
+                template="plotly_white"
+            )
+            st.plotly_chart(fig, use_container_width=True)
     except Exception as e:
         st.warning(f"No se pudo graficar evolución temporal. Error: {e}")
 
