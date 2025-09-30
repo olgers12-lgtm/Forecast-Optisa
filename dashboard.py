@@ -11,7 +11,7 @@ from datetime import datetime
 
 # --- CONFIGURACIÓN MODERNA ---
 st.set_page_config(
-    page_title=" Dashboard de Producción",
+    page_title="🚀 Dashboard Ejecutivo de Producción",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -103,24 +103,27 @@ with st.sidebar:
             mask_fecha = df_melt["Fecha_dt"].dt.date.isin(fechas_sel)
         else:
             mask_fecha = df_melt["Fecha_dt"].dt.date == fechas_sel
+        agrupador = "dia"
     elif "Semana" in filtro_tipo:
         df_melt["SemanaISO"] = df_melt["Fecha_dt"].dt.isocalendar().week
         df_melt["AñoISO"] = df_melt["Fecha_dt"].dt.isocalendar().year
         semanas_unicas = sorted(df_melt[["AñoISO", "SemanaISO"]].drop_duplicates().values.tolist())
         semana_labels = [
-            f"<span style='color:#0D8ABC;font-weight:bold;'>Semana {week}</span><span style='color:#555;'> ({df_melt[(df_melt['AñoISO'] == year) & (df_melt['SemanaISO'] == week)]['Fecha_dt'].min().strftime('%d-%b')} - {df_melt[(df_melt['AñoISO'] == year) & (df_melt['SemanaISO'] == week)]['Fecha_dt'].max().strftime('%d-%b')})</span>"
+            f"Semana {week} ({df_melt[(df_melt['AñoISO'] == year) & (df_melt['SemanaISO'] == week)]['Fecha_dt'].min().strftime('%d-%b')} - {df_melt[(df_melt['AñoISO'] == year) & (df_melt['SemanaISO'] == week)]['Fecha_dt'].max().strftime('%d-%b')})"
             for year, week in semanas_unicas
         ]
         semana_sel_idx = st.selectbox(
             "Selecciona semana:", options=range(len(semanas_unicas)),
-            format_func=lambda i: f"Semana {semanas_unicas[i][1]} ({df_melt[(df_melt['AñoISO'] == semanas_unicas[i][0]) & (df_melt['SemanaISO'] == semanas_unicas[i][1])]['Fecha_dt'].min().strftime('%d-%b')} - {df_melt[(df_melt['AñoISO'] == semanas_unicas[i][0]) & (df_melt['SemanaISO'] == semanas_unicas[i][1])]['Fecha_dt'].max().strftime('%d-%b')})"
+            format_func=lambda i: semana_labels[i]
         )
         year_sel, week_sel = semanas_unicas[semana_sel_idx]
         mask_fecha = (df_melt["AñoISO"] == year_sel) & (df_melt["SemanaISO"] == week_sel)
+        agrupador = "semana"
     elif "Mes" in filtro_tipo:
         meses_disponibles = sorted(df_melt["Fecha_dt"].dt.strftime("%B %Y").unique())
         mes_sel = st.selectbox("Selecciona mes:", options=meses_disponibles)
         mask_fecha = df_melt["Fecha_dt"].dt.strftime("%B %Y") == mes_sel
+        agrupador = "mes"
     else:
         fecha_min, fecha_max = df_melt["Fecha_dt"].min(), df_melt["Fecha_dt"].max()
         fecha_inicio, fecha_fin = st.date_input(
@@ -131,11 +134,32 @@ with st.sidebar:
             format="DD/MM/YYYY"
         )
         mask_fecha = (df_melt["Fecha_dt"] >= pd.to_datetime(fecha_inicio)) & (df_melt["Fecha_dt"] <= pd.to_datetime(fecha_fin))
+        agrupador = "rango"
 
 df_filtrado_fecha = df_melt[mask_fecha]
 
+# --- AGRUPACIONES COOL ---
+if agrupador == "dia":
+    agrupado = df_filtrado_fecha.groupby(["Fecha_dt", col_indicador], as_index=False).agg({"Valor": "sum"})
+    x_vals = agrupado["Fecha_dt"].dt.strftime("%d-%b")
+    legend_vals = agrupado[col_indicador]
+elif agrupador == "semana":
+    df_filtrado_fecha["SemanaISO"] = df_filtrado_fecha["Fecha_dt"].dt.isocalendar().week
+    df_filtrado_fecha["AñoISO"] = df_filtrado_fecha["Fecha_dt"].dt.isocalendar().year
+    agrupado = df_filtrado_fecha.groupby(["AñoISO", "SemanaISO", col_indicador], as_index=False).agg({"Valor": "sum"})
+    x_vals = agrupado.apply(lambda row: f"S{row['SemanaISO']} {row['AñoISO']}", axis=1)
+    legend_vals = agrupado[col_indicador]
+elif agrupador == "mes":
+    agrupado = df_filtrado_fecha.groupby([df_filtrado_fecha["Fecha_dt"].dt.strftime("%B %Y"), col_indicador], as_index=False).agg({"Valor": "sum"})
+    x_vals = agrupado["Fecha_dt"] if "Fecha_dt" in agrupado else agrupado.iloc[:,0]
+    legend_vals = agrupado[col_indicador]
+else:  # rango personalizado
+    agrupado = df_filtrado_fecha.groupby(["Fecha_dt", col_indicador], as_index=False).agg({"Valor": "sum"})
+    x_vals = agrupado["Fecha_dt"].dt.strftime("%d-%b")
+    legend_vals = agrupado[col_indicador]
+
 # --- KPIs INDUSTRIALES ESTÉTICOS ---
-st.markdown("<h2 style='color:#F6AE2D'>🧮 KPIs Optisa</h2>", unsafe_allow_html=True)
+st.markdown("<h2 style='color:#F6AE2D'>🧮 KPIs Industriales</h2>", unsafe_allow_html=True)
 kpi_cols = st.columns(4)
 
 entrada_real = df_filtrado_fecha[df_filtrado_fecha[col_indicador].str.lower().str.contains("entrada real")]['Valor'].sum()
@@ -144,7 +168,6 @@ salida_real = df_filtrado_fecha[df_filtrado_fecha[col_indicador].str.lower().str
 salida_proj = df_filtrado_fecha[df_filtrado_fecha[col_indicador].str.lower().str.contains("salida proyectada")]['Valor'].sum()
 wip = df_filtrado_fecha[df_filtrado_fecha[col_indicador].str.lower().str.contains("wip")]['Valor']
 
-# Delta vs Proyectado
 delta_entrada = entrada_real - entrada_proj if entrada_proj else None
 delta_salida = salida_real - salida_proj if salida_proj else None
 eficiencia = salida_real / salida_proj * 100 if salida_proj > 0 else None
@@ -212,31 +235,33 @@ if not wip_hoy.empty:
             f"</div>", unsafe_allow_html=True
         )
 
-# --- GRÁFICO TEMPORAL COOL ---
-st.markdown("<h2 style='color:#3EC0ED'>📊 Evolución de Indicadores</h2>", unsafe_allow_html=True)
-fig = go.Figure()
-for i, ind in enumerate(indicador_sel):
-    data = df_filtrado_fecha[df_filtrado_fecha[col_indicador] == ind].sort_values("Fecha_dt")
-    if not data.empty:
-        fig.add_trace(go.Scatter(
-            x=data["Fecha_dt"].dt.strftime("%d-%b"),
-            y=data["Valor"],
+# --- GRÁFICO COOL ACUMULADO ---
+st.markdown("<h2 style='color:#3EC0ED'>📈 Evolución Acumulada: Entradas/Salidas Proyectadas</h2>", unsafe_allow_html=True)
+fig_acum = go.Figure()
+for i, indicador in enumerate(["Entrada-Proyectada", "Salida Proyectada", "Entrada Real", "Salida Real"]):
+    if indicador in agrupado[col_indicador].unique():
+        df_acum = agrupado[agrupado[col_indicador] == indicador].copy()
+        df_acum = df_acum.sort_values("Fecha_dt" if agrupador in ["dia", "rango"] else agrupado.columns[0])
+        df_acum["Acumulado"] = df_acum["Valor"].cumsum()
+        fig_acum.add_trace(go.Scatter(
+            x=x_vals[df_acum.index],
+            y=df_acum["Acumulado"],
             mode='lines+markers',
-            name=ind,
+            name=f"{indicador} (Acumulada)",
             line=dict(color=CORPORATE_COLORS[i % len(CORPORATE_COLORS)], width=3),
-            marker=dict(size=8),
-            hovertemplate=f'Indicador: {ind}<br>Fecha: %{{x}}<br>Valor: %{{y}}<extra></extra>'
+            marker=dict(size=7),
+            hovertemplate=f'{indicador}<br>Período: %{{x}}<br>Acumulado: %{{y}}<extra></extra>'
         ))
-fig.update_layout(
-    xaxis_title="Fecha",
-    yaxis_title="Valor",
+fig_acum.update_layout(
+    xaxis_title="Período",
+    yaxis_title="Acumulado",
     legend_title="Indicador",
     hovermode="x unified",
     template="plotly_white",
     font=dict(family="Segoe UI,Roboto,Arial", size=15),
     margin=dict(l=30, r=30, t=40, b=40)
 )
-st.plotly_chart(fig, use_container_width=True)
+st.plotly_chart(fig_acum, use_container_width=True)
 
 # --- HEATMAP WIP COOL ---
 wip_inds = [w for w in indicador_sel if "wip" in w.lower()]
