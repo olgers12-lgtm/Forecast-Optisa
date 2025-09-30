@@ -7,20 +7,33 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import json
 import re
+from datetime import datetime
 
-st.set_page_config(page_title="🚀 Dashboard Ejecutivo de Producción", layout="wide", initial_sidebar_state="expanded")
+# --- CONFIGURACIÓN TENDENCIA ---
+st.set_page_config(
+    page_title="🚀 Dashboard Ejecutivo de Producción",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
-CORPORATE_COLORS = ["#1F2A56", "#0D8ABC", "#3EC0ED", "#61C0BF", "#F6AE2D", "#F74B36", "#A3FFAE"]
+# --- COLORES Y THRESHOLDS ---
+CORPORATE_COLORS = [
+    "#1F2A56", "#0D8ABC", "#3EC0ED", "#61C0BF", "#F6AE2D", "#F74B36", "#A3FFAE"
+]
 WIP_THRESHOLDS = {"Alerta": 1200, "Crítico": 1500}
 EFFICIENCY_GOAL = 95
 
 SHEET_ID = "1U3DwxRVqQFwuPUs0-zvmitgz_LWdhScy-3fu-awBOHU"
 SHEET_NAME = "Produccion"
 
+# --- DATA LOAD ---
 @st.cache_data(ttl=600)
 def cargar_datos(sheet_id, sheet_name):
     sa_info = json.loads(st.secrets["GCP_SERVICE_ACCOUNT_JSON"])
-    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+    scope = [
+        "https://spreadsheets.google.com/feeds",
+        "https://www.googleapis.com/auth/drive"
+    ]
     creds = ServiceAccountCredentials.from_json_keyfile_dict(sa_info, scope)
     client = gspread.authorize(creds)
     sh = client.open_by_key(sheet_id)
@@ -41,7 +54,7 @@ def agregar_ano(col):
         return col
     return None
 
-# --- Datos base ---
+# --- DATA PREP ---
 df = cargar_datos(SHEET_ID, SHEET_NAME)
 col_indicador = next((c for c in df.columns if "indicador" in c.lower()), None)
 if not col_indicador:
@@ -49,15 +62,18 @@ if not col_indicador:
     st.stop()
 df = df[df[col_indicador].notnull() & (df[col_indicador] != '')]
 
-# --- Fechas robustas ---
 fechas = [c for c in df.columns if c != col_indicador]
 fechas_dt = [agregar_ano(f) for f in fechas]
 fechas_validas = [fechas[i] for i in range(len(fechas)) if fechas_dt[i] is not None]
 fechas_dt_validas = [f for f in fechas_dt if f is not None]
 
-# --- Melt largo ---
 indicadores = df[col_indicador].unique().tolist()
-indicador_sel = st.multiselect("Selecciona indicadores:", indicadores, default=indicadores)
+indicador_sel = st.multiselect(
+    "Selecciona indicadores:",
+    indicadores,
+    default=[i for i in indicadores if "real" in i.lower() or "proyectada" in i.lower() or "wip" in i.lower()]
+)
+
 df_melt = df[df[col_indicador].isin(indicador_sel)].melt(
     id_vars=[col_indicador],
     value_vars=fechas_validas,
@@ -68,17 +84,12 @@ df_melt["Fecha_dt"] = pd.to_datetime(df_melt["Fecha"].apply(agregar_ano), format
 df_melt["Valor"] = pd.to_numeric(df_melt["Valor"], errors="coerce")
 df_melt = df_melt.dropna(subset=["Fecha_dt"])
 
-# --- Panel de filtros moderno y estético ---
+# --- SIDEBAR FILTROS MODERNOS ---
 with st.sidebar:
-    st.header("📅 Filtros de fechas")
+    st.header("📅 Filtros de Fechas")
     filtro_tipo = st.radio(
         "Agrupar por:",
-        [
-            "🗓️ Día",
-            "📆 Semana",
-            "🗓️ Mes",
-            "🎯 Rango personalizado"
-        ],
+        ["🗓️ Día", "📆 Semana", "🗓️ Mes", "🎯 Rango personalizado"],
         horizontal=False
     )
     if "Día" in filtro_tipo:
@@ -95,19 +106,15 @@ with st.sidebar:
         else:
             mask_fecha = df_melt["Fecha_dt"].dt.date == fechas_sel
     elif "Semana" in filtro_tipo:
-        # Semana ISO y año
         df_melt["SemanaISO"] = df_melt["Fecha_dt"].dt.isocalendar().week
         df_melt["AñoISO"] = df_melt["Fecha_dt"].dt.isocalendar().year
         semanas_unicas = sorted(df_melt[["AñoISO", "SemanaISO"]].drop_duplicates().values.tolist())
-        semana_labels = []
-        for year, week in semanas_unicas:
-            semana_df = df_melt[(df_melt["AñoISO"] == year) & (df_melt["SemanaISO"] == week)]
-            fecha_ini = semana_df["Fecha_dt"].min().strftime("%d-%b")
-            fecha_fin = semana_df["Fecha_dt"].max().strftime("%d-%b")
-            semana_labels.append(f"Semana {week} ({fecha_ini} - {fecha_fin})")
+        semana_labels = [
+            f"Semana {week} ({df_melt[(df_melt['AñoISO'] == year) & (df_melt['SemanaISO'] == week)]['Fecha_dt'].min().strftime('%d-%b')} - {df_melt[(df_melt['AñoISO'] == year) & (df_melt['SemanaISO'] == week)]['Fecha_dt'].max().strftime('%d-%b')})"
+            for year, week in semanas_unicas
+        ]
         semana_sel_idx = st.selectbox(
-            "Selecciona semana:",
-            options=range(len(semanas_unicas)),
+            "Selecciona semana:", options=range(len(semanas_unicas)),
             format_func=lambda i: semana_labels[i]
         )
         year_sel, week_sel = semanas_unicas[semana_sel_idx]
@@ -129,9 +136,9 @@ with st.sidebar:
 
 df_filtrado_fecha = df_melt[mask_fecha]
 
-# --- KPIs industriales ajustados ---
-st.subheader("🧮 KPIs Industriales")
-col1, col2, col3, col4 = st.columns(4)
+# --- KPIs INDUSTRIALES ESTÉTICOS ---
+st.markdown("## 🧮 KPIs Industriales")
+kpi_cols = st.columns(4)
 
 entrada_real = df_filtrado_fecha[df_filtrado_fecha[col_indicador].str.lower().str.contains("entrada real")]['Valor'].sum()
 entrada_proj = df_filtrado_fecha[df_filtrado_fecha[col_indicador].str.lower().str.contains("entrada-proyectada")]['Valor'].sum()
@@ -139,45 +146,81 @@ salida_real = df_filtrado_fecha[df_filtrado_fecha[col_indicador].str.lower().str
 salida_proj = df_filtrado_fecha[df_filtrado_fecha[col_indicador].str.lower().str.contains("salida proyectada")]['Valor'].sum()
 wip = df_filtrado_fecha[df_filtrado_fecha[col_indicador].str.lower().str.contains("wip")]['Valor']
 
+# Delta vs Proyectado
 delta_entrada = entrada_real - entrada_proj if entrada_proj else None
 delta_salida = salida_real - salida_proj if salida_proj else None
 eficiencia = salida_real / salida_proj * 100 if salida_proj > 0 else None
 
-col1.metric(
-    "Entrada Real",
-    f"{int(entrada_real)}",
-    f"{delta_entrada:.1f}" if delta_entrada is not None else "-",
-    delta_color="inverse" if delta_entrada is not None and delta_entrada < 0 else "normal"
+# KPI Card Entrada Real
+kpi_cols[0].markdown(
+    f"""
+    <div style='background:#fff;border-radius:12px;padding:20px 10px;box-shadow:0 2px 8px #eee;text-align:center'>
+      <div style='font-size:20px;font-weight:bold;'>Entrada Real</div>
+      <div style='font-size:34px;font-weight:bold;color:#1F2A56'>{int(entrada_real):,}</div>
+      <span style='font-size:20px;color:{'#F74B36' if delta_entrada is not None and delta_entrada < 0 else '#61C0BF'};font-weight:bold;'>
+        {delta_entrada:.1f if delta_entrada is not None else '-'}
+      </span>
+    </div>
+    """, unsafe_allow_html=True
 )
-col2.metric(
-    "Salida Real",
-    f"{int(salida_real)}",
-    f"{delta_salida:.1f}" if delta_salida is not None else "-",
-    delta_color="inverse" if delta_salida is not None and delta_salida < 0 else "normal"
+# KPI Card Salida Real
+kpi_cols[1].markdown(
+    f"""
+    <div style='background:#fff;border-radius:12px;padding:20px 10px;box-shadow:0 2px 8px #eee;text-align:center'>
+      <div style='font-size:20px;font-weight:bold;'>Salida Real</div>
+      <div style='font-size:34px;font-weight:bold;color:#1F2A56'>{int(salida_real):,}</div>
+      <span style='font-size:20px;color:{'#F74B36' if delta_salida is not None and delta_salida < 0 else '#61C0BF'};font-weight:bold;'>
+        {delta_salida:.1f if delta_salida is not None else '-'}
+      </span>
+    </div>
+    """, unsafe_allow_html=True
 )
-col3.metric(
-    "Eficiencia (%)",
-    f"{eficiencia:.1f}%" if eficiencia else "-",
-    delta_color="inverse" if eficiencia and eficiencia < EFFICIENCY_GOAL else "normal"
+# KPI Card Eficiencia
+kpi_cols[2].markdown(
+    f"""
+    <div style='background:#fff;border-radius:12px;padding:20px 10px;box-shadow:0 2px 8px #eee;text-align:center'>
+      <div style='font-size:20px;font-weight:bold;'>Eficiencia (%)</div>
+      <div style='font-size:34px;font-weight:bold;color:#1F2A56'>{eficiencia:.1f if eficiencia else '-'}</div>
+    </div>
+    """, unsafe_allow_html=True
 )
-if not wip.empty and pd.notnull(wip.mean()):
-    col4.metric("WIP Promedio", f"{wip.mean():.1f}")
-else:
-    col4.metric("WIP Promedio", "-", "Sin datos")
+# KPI Card WIP Promedio
+kpi_cols[3].markdown(
+    f"""
+    <div style='background:#fff;border-radius:12px;padding:20px 10px;box-shadow:0 2px 8px #eee;text-align:center'>
+      <div style='font-size:20px;font-weight:bold;'>WIP Promedio</div>
+      <div style='font-size:34px;font-weight:bold;color:#1F2A56'>{wip.mean():.1f if not wip.empty and pd.notnull(wip.mean()) else '-'}</div>
+    </div>
+    """, unsafe_allow_html=True
+)
 
-if not wip.empty and wip.max() > WIP_THRESHOLDS["Crítico"]:
-    st.error(f"🚨 WIP crítico: {int(wip.max())} (lim. {WIP_THRESHOLDS['Crítico']})")
-elif not wip.empty and wip.max() > WIP_THRESHOLDS["Alerta"]:
-    st.warning(f"⚠️ WIP en alerta: {int(wip.max())} (lim. {WIP_THRESHOLDS['Alerta']})")
+# --- ALERTA WIP SOLO TIEMPO REAL (DÍA ACTUAL) ---
+hoy = datetime.today().date()
+df_hoy = df_filtrado_fecha[df_filtrado_fecha["Fecha_dt"].dt.date == hoy]
+wip_hoy = df_hoy[df_hoy[col_indicador].str.lower().str.contains("wip")]['Valor']
 
-# --- Visualización avanzada ---
-st.subheader("📊 Evolución y Heatmap WIP")
+if not wip_hoy.empty:
+    wip_max_hoy = wip_hoy.max()
+    if wip_max_hoy > WIP_THRESHOLDS["Crítico"]:
+        st.markdown(
+            f"<div style='background:#ffeaea;border-radius:8px;padding:10px;color:#F74B36;font-weight:bold;'>"
+            f"🚨 WIP crítico: {int(wip_max_hoy)} (lim. {WIP_THRESHOLDS['Crítico']})"
+            f"</div>", unsafe_allow_html=True
+        )
+    elif wip_max_hoy > WIP_THRESHOLDS["Alerta"]:
+        st.markdown(
+            f"<div style='background:#fffbe6;border-radius:8px;padding:10px;color:#F6AE2D;font-weight:bold;'>"
+            f"⚠️ WIP en alerta: {int(wip_max_hoy)} (lim. {WIP_THRESHOLDS['Alerta']})"
+            f"</div>", unsafe_allow_html=True
+        )
+
+# --- GRÁFICO TEMPORAL COOL ---
+st.markdown("## 📊 Evolución de Indicadores")
 fig = go.Figure()
 for i, ind in enumerate(indicador_sel):
     data = df_filtrado_fecha[df_filtrado_fecha[col_indicador] == ind].sort_values("Fecha_dt")
     if not data.empty:
         fig.add_trace(go.Scatter(
-            # Solo fecha, sin hora
             x=data["Fecha_dt"].dt.strftime("%d-%b"),
             y=data["Valor"],
             mode='lines+markers',
@@ -191,10 +234,13 @@ fig.update_layout(
     yaxis_title="Valor",
     legend_title="Indicador",
     hovermode="x unified",
-    template="plotly_white"
+    template="plotly_white",
+    font=dict(family="Segoe UI,Roboto,Arial", size=15),
+    margin=dict(l=30, r=30, t=40, b=40)
 )
 st.plotly_chart(fig, use_container_width=True)
 
+# --- HEATMAP WIP COOL ---
 wip_inds = [w for w in indicador_sel if "wip" in w.lower()]
 if wip_inds and not df_filtrado_fecha.empty:
     df_wip = df_filtrado_fecha[df_filtrado_fecha[col_indicador].isin(wip_inds)].copy()
@@ -218,10 +264,16 @@ if wip_inds and not df_filtrado_fecha.empty:
         tickvals=list(df_wip_pivot.columns),
         ticktext=[d.strftime("%d-%b") for d in df_wip_pivot.columns]
     )
+    fig_hm.update_layout(
+        font=dict(family="Segoe UI,Roboto,Arial", size=15),
+        margin=dict(l=30, r=30, t=40, b=40)
+    )
+    st.markdown("## 🌡️ Heatmap WIP")
     st.plotly_chart(fig_hm, use_container_width=True)
 else:
     st.info("Selecciona un indicador WIP y rango de fechas válido para ver el heatmap.")
 
+# --- DESCARGA Y HOJA ORIGINAL ---
 if not df_filtrado_fecha.empty:
     csv = df_filtrado_fecha.to_csv(index=False).encode('utf-8')
     st.download_button(
