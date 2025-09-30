@@ -5,7 +5,6 @@ import plotly.express as px
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import json
-from datetime import datetime
 
 st.set_page_config(page_title="📊 Dashboard Ejecutivo de Producción", layout="wide")
 st.title("📊 Dashboard Ejecutivo de Producción")
@@ -35,6 +34,7 @@ def agregar_ano(col):
     col = col.strip().lower()
     if "-" in col and col.count("-") == 2:
         return col
+    # Septiembre y octubre SIEMPRE 2025
     if "sept" in col or "oct" in col:
         year = "2025"
     else:
@@ -44,6 +44,7 @@ def agregar_ano(col):
 try:
     df = cargar_datos(SHEET_ID, SHEET_NAME)
 
+    # Detecta columna Indicador
     col_indicador = None
     for c in df.columns:
         if "indicador" in c.lower():
@@ -55,14 +56,10 @@ try:
 
     df = df[df[col_indicador].notnull() & (df[col_indicador] != '')]
 
+    # Detecta columnas de fecha (todas menos 'Indicador')
     fechas = [c for c in df.columns if c != col_indicador]
-    fechas_pares = [(f, agregar_ano(f)) for f in fechas]
-    fechas_dt = [pd.to_datetime(f_con_ano, format="%d-%b-%Y", errors="coerce") for f, f_con_ano in fechas_pares]
-    fechas_validas = [fechas_pares[i][0] for i in range(len(fechas_pares)) if not pd.isnull(fechas_dt[i])]
-    fechas_con_ano_validas = [fechas_pares[i][1] for i in range(len(fechas_pares)) if not pd.isnull(fechas_dt[i])]
-    if not fechas_validas:
-        st.warning("No hay columnas de fechas válidas. Revisar encabezados y formato de fechas.")
-        st.stop()
+    fechas_dt = [pd.to_datetime(agregar_ano(f), format="%d-%b-%Y", errors="coerce") for f in fechas]
+    fechas_validas = [fechas[i] for i in range(len(fechas)) if not pd.isnull(fechas_dt[i])]
 
     indicadores = df[col_indicador].unique().tolist()
     indicador_sel = st.multiselect("Selecciona uno o más indicadores para analizar:", indicadores, default=indicadores)
