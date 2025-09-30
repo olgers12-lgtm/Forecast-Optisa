@@ -32,7 +32,7 @@ def cargar_datos(sheet_id, sheet_name):
 
 try:
     df = cargar_datos(SHEET_ID, SHEET_NAME)
-
+    
     # Detect columna de indicador (robusto para nombres diferentes)
     col_indicador = None
     for c in df.columns:
