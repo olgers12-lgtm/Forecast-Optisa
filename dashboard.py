@@ -31,22 +31,25 @@ def cargar_datos(sheet_id, sheet_name):
     df = pd.DataFrame(data)
     return df
 
-def detectar_ano_por_mes(col):
+def agregar_ano(col):
+    """
+    Detecta el año de la columna de fecha automáticamente:
+    - Si la fecha es septiembre y la fecha actual es septiembre, asigna año actual.
+    - Si es octubre y la fecha actual es septiembre, asigna año actual.
+    - Si es octubre y la fecha actual es octubre o después, asigna año actual.
+    - Si es septiembre y la fecha actual es octubre o después, asigna año anterior.
+    """
     col = col.strip().lower()
-    # Si ya tiene año, lo deja
     if "-" in col and col.count("-") == 2:
         return col
-    # Obtiene año actual y anterior por contexto
     hoy = datetime.today()
     year_actual = hoy.year
-    # Si el mes es septiembre y estamos en octubre o adelante, toma año anterior
+    # Detecta mes en la etiqueta
     if "sept" in col:
-        # Si estamos en septiembre, octubre, noviembre, diciembre: asume año actual
-        if hoy.month <= 9:
-            year = year_actual
-        else:
-            year = year_actual - 1
+        # Si es septiembre y hoy es octubre o después, usa año anterior
+        year = year_actual if hoy.month <= 9 else year_actual - 1
     elif "oct" in col:
+        # Si es octubre, siempre usa año actual
         year = year_actual
     elif "nov" in col:
         year = year_actual
@@ -74,12 +77,12 @@ try:
 
     # Detecta columnas de fecha (todas menos 'Indicador')
     fechas = [c for c in df.columns if c != col_indicador]
-    fechas_con_ano = [detectar_ano_por_mes(f) for f in fechas]
+    fechas_con_ano = [agregar_ano(f) for f in fechas]
 
     # Convierte las etiquetas a datetime sólo para validación
     fechas_dt = pd.to_datetime(fechas_con_ano, format="%d-%b-%Y", errors="coerce")
     fechas_validas = [fechas[i] for i in range(len(fechas_dt)) if not pd.isnull(fechas_dt[i])]
-    fechas_con_ano_validas = [detectar_ano_por_mes(fechas[i]) for i in range(len(fechas_dt)) if not pd.isnull(fechas_dt[i])]
+    fechas_con_ano_validas = [agregar_ano(fechas[i]) for i in range(len(fechas_dt)) if not pd.isnull(fechas_dt[i])]
     if not fechas_validas:
         st.warning("No hay columnas de fechas válidas. Revisar encabezados y formato de fechas.")
         st.stop()
@@ -95,8 +98,8 @@ try:
         var_name='Fecha',
         value_name='Valor'
     )
-    # Crea columna Fecha_dt usando detectar_ano_por_mes y convierte a datetime
-    df_melt["Fecha_dt"] = pd.to_datetime(df_melt["Fecha"].apply(detectar_ano_por_mes), format="%d-%b-%Y", errors="coerce")
+    # Crea columna Fecha_dt usando agregar_ano y convierte a datetime
+    df_melt["Fecha_dt"] = pd.to_datetime(df_melt["Fecha"].apply(agregar_ano), format="%d-%b-%Y", errors="coerce")
     df_melt["Valor"] = pd.to_numeric(df_melt["Valor"], errors="coerce")
     df_melt = df_melt.dropna(subset=["Fecha_dt"])
 
@@ -182,28 +185,32 @@ try:
     except Exception as e:
         st.warning(f"No se pudo graficar evolución temporal. Error: {e}")
 
-    # Heatmap específico para WIP
+    # Heatmap específico para WIP (ordenado por fecha)
     st.subheader("🌡️ Heatmap WIP (Rojo si > 1200)")
     wip_inds = [w for w in indicador_sel if "wip" in w.lower()]
     if wip_inds and not df_filtrado_fecha.empty:
         try:
-            df_wip = df_filtrado_fecha[df_filtrado_fecha[col_indicador].isin(wip_inds)].pivot(index=col_indicador, columns="Fecha", values="Valor")
-            df_wip = df_wip.apply(pd.to_numeric, errors="coerce")
+            df_wip = df_filtrado_fecha[df_filtrado_fecha[col_indicador].isin(wip_inds)].copy()
+            df_wip["Fecha_dt"] = pd.to_datetime(df_wip["Fecha"].apply(agregar_ano), format="%d-%b-%Y", errors="coerce")
+            df_wip = df_wip.sort_values("Fecha_dt")
+            df_wip_pivot = df_wip.pivot(index=col_indicador, columns="Fecha_dt", values="Valor")
+            df_wip_pivot = df_wip_pivot.sort_index(axis=1)
             colorscale = [
-                [0, "#61C0BF"],      # verde
-                [0.75, "#F6AE2D"],   # amarillo
-                [0.9, "#F74B36"],    # rojo fuerte
-                [1, "#8B0000"]
+                [0, "#61C0BF"], [0.75, "#F6AE2D"], [0.9, "#F74B36"], [1, "#8B0000"]
             ]
-            vmax = max(WIP_THRESHOLD + 300, float(df_wip.max().max() if not df_wip.empty else 0))
+            vmax = max(WIP_THRESHOLD + 300, float(df_wip_pivot.max().max() if not df_wip_pivot.empty else 0))
             fig_hm = px.imshow(
-                df_wip,
+                df_wip_pivot,
                 aspect="auto",
                 color_continuous_scale=colorscale,
                 zmin=0,
                 zmax=vmax,
                 labels=dict(color="WIP"),
                 text_auto=True
+            )
+            fig_hm.update_xaxes(
+                tickvals=list(df_wip_pivot.columns),
+                ticktext=[d.strftime("%d-%b") for d in df_wip_pivot.columns]
             )
             st.plotly_chart(fig_hm, use_container_width=True)
         except Exception as e:
@@ -234,7 +241,7 @@ try:
         - **KPIs**: resumen dinámico de totales, promedios y extremos para cada indicador.
         - **Agrupamiento dinámico**: cambia de día, semana, mes o rango personalizado de fechas.
         - **Gráfico interactivo**: líneas por indicador, permite comparación visual.
-        - **Heatmap WIP**: zonas rojas alertan sobre exceso de trabajos en proceso (>1200).
+        - **Heatmap WIP**: zonas rojas alertan sobre exceso de trabajos en proceso (>1200), ordenado cronológicamente.
         - **Descarga**: exporta los datos filtrados para análisis externo.
         - **Hoja original**: puedes mostrar/ocultar la hoja completa si la necesitas para análisis profundo.
         """)
