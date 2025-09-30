@@ -9,14 +9,13 @@ import json
 import re
 from datetime import datetime
 
-# --- CONFIGURACIÓN TENDENCIA ---
+# --- CONFIGURACIÓN MODERNA ---
 st.set_page_config(
     page_title="🚀 Dashboard Ejecutivo de Producción",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# --- COLORES Y THRESHOLDS ---
 CORPORATE_COLORS = [
     "#1F2A56", "#0D8ABC", "#3EC0ED", "#61C0BF", "#F6AE2D", "#F74B36", "#A3FFAE"
 ]
@@ -26,7 +25,6 @@ EFFICIENCY_GOAL = 95
 SHEET_ID = "1U3DwxRVqQFwuPUs0-zvmitgz_LWdhScy-3fu-awBOHU"
 SHEET_NAME = "Produccion"
 
-# --- DATA LOAD ---
 @st.cache_data(ttl=600)
 def cargar_datos(sheet_id, sheet_name):
     sa_info = json.loads(st.secrets["GCP_SERVICE_ACCOUNT_JSON"])
@@ -86,7 +84,7 @@ df_melt = df_melt.dropna(subset=["Fecha_dt"])
 
 # --- SIDEBAR FILTROS MODERNOS ---
 with st.sidebar:
-    st.header("📅 Filtros de Fechas")
+    st.markdown("<h2 style='color:#0D8ABC'>📅 Filtros de Fechas</h2>", unsafe_allow_html=True)
     filtro_tipo = st.radio(
         "Agrupar por:",
         ["🗓️ Día", "📆 Semana", "🗓️ Mes", "🎯 Rango personalizado"],
@@ -110,12 +108,12 @@ with st.sidebar:
         df_melt["AñoISO"] = df_melt["Fecha_dt"].dt.isocalendar().year
         semanas_unicas = sorted(df_melt[["AñoISO", "SemanaISO"]].drop_duplicates().values.tolist())
         semana_labels = [
-            f"Semana {week} ({df_melt[(df_melt['AñoISO'] == year) & (df_melt['SemanaISO'] == week)]['Fecha_dt'].min().strftime('%d-%b')} - {df_melt[(df_melt['AñoISO'] == year) & (df_melt['SemanaISO'] == week)]['Fecha_dt'].max().strftime('%d-%b')})"
+            f"<span style='color:#0D8ABC;font-weight:bold;'>Semana {week}</span><span style='color:#555;'> ({df_melt[(df_melt['AñoISO'] == year) & (df_melt['SemanaISO'] == week)]['Fecha_dt'].min().strftime('%d-%b')} - {df_melt[(df_melt['AñoISO'] == year) & (df_melt['SemanaISO'] == week)]['Fecha_dt'].max().strftime('%d-%b')})</span>"
             for year, week in semanas_unicas
         ]
         semana_sel_idx = st.selectbox(
             "Selecciona semana:", options=range(len(semanas_unicas)),
-            format_func=lambda i: semana_labels[i]
+            format_func=lambda i: f"Semana {semanas_unicas[i][1]} ({df_melt[(df_melt['AñoISO'] == semanas_unicas[i][0]) & (df_melt['SemanaISO'] == semanas_unicas[i][1])]['Fecha_dt'].min().strftime('%d-%b')} - {df_melt[(df_melt['AñoISO'] == semanas_unicas[i][0]) & (df_melt['SemanaISO'] == semanas_unicas[i][1])]['Fecha_dt'].max().strftime('%d-%b')})"
         )
         year_sel, week_sel = semanas_unicas[semana_sel_idx]
         mask_fecha = (df_melt["AñoISO"] == year_sel) & (df_melt["SemanaISO"] == week_sel)
@@ -137,7 +135,7 @@ with st.sidebar:
 df_filtrado_fecha = df_melt[mask_fecha]
 
 # --- KPIs INDUSTRIALES ESTÉTICOS ---
-st.markdown("## 🧮 KPIs Industriales")
+st.markdown("<h2 style='color:#F6AE2D'>🧮 KPIs Industriales</h2>", unsafe_allow_html=True)
 kpi_cols = st.columns(4)
 
 entrada_real = df_filtrado_fecha[df_filtrado_fecha[col_indicador].str.lower().str.contains("entrada real")]['Valor'].sum()
@@ -151,50 +149,50 @@ delta_entrada = entrada_real - entrada_proj if entrada_proj else None
 delta_salida = salida_real - salida_proj if salida_proj else None
 eficiencia = salida_real / salida_proj * 100 if salida_proj > 0 else None
 
-# KPI Card Entrada Real
+delta_entrada_str = f"{delta_entrada:.1f}" if delta_entrada is not None else "-"
+delta_salida_str = f"{delta_salida:.1f}" if delta_salida is not None else "-"
+eficiencia_str = f"{eficiencia:.1f}" if eficiencia is not None else "-"
+wip_prom_str = f"{wip.mean():.1f}" if not wip.empty and pd.notnull(wip.mean()) else "-"
+
+color_ent = '#F74B36' if delta_entrada is not None and delta_entrada < 0 else '#61C0BF'
+color_sal = '#F74B36' if delta_salida is not None and delta_salida < 0 else '#61C0BF'
+
 kpi_cols[0].markdown(
     f"""
     <div style='background:#fff;border-radius:12px;padding:20px 10px;box-shadow:0 2px 8px #eee;text-align:center'>
       <div style='font-size:20px;font-weight:bold;'>Entrada Real</div>
       <div style='font-size:34px;font-weight:bold;color:#1F2A56'>{int(entrada_real):,}</div>
-      <span style='font-size:20px;color:{'#F74B36' if delta_entrada is not None and delta_entrada < 0 else '#61C0BF'};font-weight:bold;'>
-        {delta_entrada:.1f if delta_entrada is not None else '-'}
-      </span>
+      <span style='font-size:20px;color:{color_ent};font-weight:bold;'>{delta_entrada_str}</span>
     </div>
     """, unsafe_allow_html=True
 )
-# KPI Card Salida Real
 kpi_cols[1].markdown(
     f"""
     <div style='background:#fff;border-radius:12px;padding:20px 10px;box-shadow:0 2px 8px #eee;text-align:center'>
       <div style='font-size:20px;font-weight:bold;'>Salida Real</div>
       <div style='font-size:34px;font-weight:bold;color:#1F2A56'>{int(salida_real):,}</div>
-      <span style='font-size:20px;color:{'#F74B36' if delta_salida is not None and delta_salida < 0 else '#61C0BF'};font-weight:bold;'>
-        {delta_salida:.1f if delta_salida is not None else '-'}
-      </span>
+      <span style='font-size:20px;color:{color_sal};font-weight:bold;'>{delta_salida_str}</span>
     </div>
     """, unsafe_allow_html=True
 )
-# KPI Card Eficiencia
 kpi_cols[2].markdown(
     f"""
     <div style='background:#fff;border-radius:12px;padding:20px 10px;box-shadow:0 2px 8px #eee;text-align:center'>
       <div style='font-size:20px;font-weight:bold;'>Eficiencia (%)</div>
-      <div style='font-size:34px;font-weight:bold;color:#1F2A56'>{eficiencia:.1f if eficiencia else '-'}</div>
+      <div style='font-size:34px;font-weight:bold;color:#1F2A56'>{eficiencia_str}</div>
     </div>
     """, unsafe_allow_html=True
 )
-# KPI Card WIP Promedio
 kpi_cols[3].markdown(
     f"""
     <div style='background:#fff;border-radius:12px;padding:20px 10px;box-shadow:0 2px 8px #eee;text-align:center'>
       <div style='font-size:20px;font-weight:bold;'>WIP Promedio</div>
-      <div style='font-size:34px;font-weight:bold;color:#1F2A56'>{wip.mean():.1f if not wip.empty and pd.notnull(wip.mean()) else '-'}</div>
+      <div style='font-size:34px;font-weight:bold;color:#1F2A56'>{wip_prom_str}</div>
     </div>
     """, unsafe_allow_html=True
 )
 
-# --- ALERTA WIP SOLO TIEMPO REAL (DÍA ACTUAL) ---
+# --- ALERTA WIP SOLO HOY ---
 hoy = datetime.today().date()
 df_hoy = df_filtrado_fecha[df_filtrado_fecha["Fecha_dt"].dt.date == hoy]
 wip_hoy = df_hoy[df_hoy[col_indicador].str.lower().str.contains("wip")]['Valor']
@@ -215,7 +213,7 @@ if not wip_hoy.empty:
         )
 
 # --- GRÁFICO TEMPORAL COOL ---
-st.markdown("## 📊 Evolución de Indicadores")
+st.markdown("<h2 style='color:#3EC0ED'>📊 Evolución de Indicadores</h2>", unsafe_allow_html=True)
 fig = go.Figure()
 for i, ind in enumerate(indicador_sel):
     data = df_filtrado_fecha[df_filtrado_fecha[col_indicador] == ind].sort_values("Fecha_dt")
@@ -268,7 +266,7 @@ if wip_inds and not df_filtrado_fecha.empty:
         font=dict(family="Segoe UI,Roboto,Arial", size=15),
         margin=dict(l=30, r=30, t=40, b=40)
     )
-    st.markdown("## 🌡️ Heatmap WIP")
+    st.markdown("<h2 style='color:#61C0BF'>🌡️ Heatmap WIP</h2>", unsafe_allow_html=True)
     st.plotly_chart(fig_hm, use_container_width=True)
 else:
     st.info("Selecciona un indicador WIP y rango de fechas válido para ver el heatmap.")
