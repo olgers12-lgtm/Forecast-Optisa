@@ -14,6 +14,7 @@ CORPORATE_COLORS = [
     "#1F2A56", "#0D8ABC", "#3EC0ED", "#61C0BF", "#F6AE2D", "#F74B36"
 ]
 WIP_THRESHOLD = 1200
+DEFAULT_YEAR = "2025"  # Cambia esto si tu sheet cambia de año
 
 SHEET_ID = "1U3DwxRVqQFwuPUs0-zvmitgz_LWdhScy-3fu-awBOHU"
 SHEET_NAME = "Produccion"
@@ -30,52 +31,59 @@ def cargar_datos(sheet_id, sheet_name):
     df = pd.DataFrame(data)
     return df
 
+# --- Función para agregar año a la etiqueta de fecha ---
+def agregar_ano(col, year=DEFAULT_YEAR):
+    # Si ya tiene año, lo deja
+    if "-" in col and col.count("-") == 2:
+        return col
+    # Si es tipo '1-sept', lo convierte a '1-sept-2025'
+    return f"{col}-{year}"
+
 try:
     df = cargar_datos(SHEET_ID, SHEET_NAME)
-    # --- Mostramos columnas para depuración ---
-    st.write("Columnas detectadas:", df.columns.tolist())
-    st.write(df.head())
 
-    # --- Detecta columna clave con limpieza de espacios ---
+    # Detección robusta de columna Indicador
     col_indicador = None
     for c in df.columns:
         if "indicador" in c.lower():
-            col_indicador = c
+            col_indicador = c.strip()
             break
     if not col_indicador:
         st.error("No se encontró columna 'Indicador'. Las columnas son: " + str(df.columns.tolist()))
         st.stop()
-    # Limpia espacios en el nombre si los hubiera
-    col_indicador = col_indicador.strip()
 
-    # --- Elimina filas vacías en columna clave ---
+    # Elimina filas vacías en columna clave
     df = df[df[col_indicador].notnull() & (df[col_indicador] != '')]
 
-    # --- Detecta columnas de fechas ---
+    # Detecta columnas de fecha (todas menos 'Indicador')
     fechas = [c for c in df.columns if c != col_indicador]
-    # Solo usa columnas que parecen fechas válidas
-    fechas_dt = pd.to_datetime(fechas, format="%d-%b-%y", errors="coerce")
+    fechas_con_ano = [agregar_ano(f) for f in fechas]
+
+    # Convierte las etiquetas a datetime sólo para validación
+    fechas_dt = pd.to_datetime(fechas_con_ano, format="%d-%b-%Y", errors="coerce")
     fechas_validas = [fechas[i] for i in range(len(fechas_dt)) if not pd.isnull(fechas_dt[i])]
+    fechas_con_ano_validas = [agregar_ano(fechas[i]) for i in range(len(fechas_dt)) if not pd.isnull(fechas_dt[i])]
     if not fechas_validas:
-        st.warning("No hay columnas de fechas válidas. Revisar encabezados.")
+        st.warning("No hay columnas de fechas válidas. Revisar encabezados y formato de fechas.")
         st.stop()
 
-    # --- Selección de indicadores ---
+    # Selección de indicadores
     indicadores = df[col_indicador].unique().tolist()
     indicador_sel = st.multiselect("Selecciona uno o más indicadores para analizar:", indicadores, default=indicadores)
 
-    # --- Transforma a formato largo (melt) ---
+    # Transforma a formato largo, con las fechas originales
     df_melt = df[df[col_indicador].isin(indicador_sel)].melt(
         id_vars=[col_indicador],
         value_vars=fechas_validas,
         var_name='Fecha',
         value_name='Valor'
     )
-    df_melt["Fecha_dt"] = pd.to_datetime(df_melt["Fecha"], format="%d-%b-%y", errors="coerce")
+    # Crea columna Fecha_dt usando agregar_ano y convierte a datetime
+    df_melt["Fecha_dt"] = pd.to_datetime(df_melt["Fecha"].apply(agregar_ano), format="%d-%b-%Y", errors="coerce")
     df_melt["Valor"] = pd.to_numeric(df_melt["Valor"], errors="coerce")
     df_melt = df_melt.dropna(subset=["Fecha_dt"])
 
-    # --- Filtros de fechas robustos ---
+    # Filtros de fechas robustos
     agrupamiento = st.radio("Agrupar por:", ["Día", "Semana (L-D)", "Mes", "Rango personalizado"], horizontal=True)
 
     mask_fecha = pd.Series([True] * len(df_melt))
@@ -110,7 +118,7 @@ try:
 
     df_filtrado_fecha = df_melt[mask_fecha]
 
-    # --- KPIs industriales avanzados ---
+    # KPIs industriales avanzados
     st.subheader("🔢 KPIs industriales")
     col1, col2, col3, col4 = st.columns(4)
     try:
@@ -133,7 +141,7 @@ try:
     except Exception as e:
         st.warning(f"KPIs industriales no disponibles. Error: {e}")
 
-    # --- Gráfico interactivo ---
+    # Gráfico interactivo
     st.subheader("📈 Evolución temporal")
     try:
         fig = go.Figure()
@@ -157,7 +165,7 @@ try:
     except Exception as e:
         st.warning(f"No se pudo graficar evolución temporal. Error: {e}")
 
-    # --- Heatmap específico para WIP ---
+    # Heatmap específico para WIP
     st.subheader("🌡️ Heatmap WIP (Rojo si > 1200)")
     wip_inds = [w for w in indicador_sel if "wip" in w.lower()]
     if wip_inds and not df_filtrado_fecha.empty:
@@ -186,7 +194,7 @@ try:
     else:
         st.info("Selecciona un indicador WIP y rango de fechas válido para ver el heatmap.")
 
-    # --- Descarga de datos filtrados ---
+    # Descarga de datos filtrados
     if not df_filtrado_fecha.empty:
         csv = df_filtrado_fecha.to_csv(index=False).encode('utf-8')
         st.download_button(
