@@ -32,7 +32,6 @@ def cargar_datos(sheet_id, sheet_name):
 
 try:
     df = cargar_datos(SHEET_ID, SHEET_NAME)
-    # Detect columns
     cols = df.columns.tolist()
     fechas = [c for c in cols if c not in ("Indicador",) and not any(x in str(c).lower() for x in ["indicador"])]
     posibles_id_vars = [c for c in cols if c not in fechas]
@@ -40,19 +39,16 @@ try:
     otras = [c for c in posibles_id_vars if c not in id_vars]
     id_vars = id_vars + otras
 
-    # Convert date columns for advanced filters
+    # Procesa fechas: solo fechas válidas
     fechas_dt = pd.to_datetime(fechas, format="%d-%b-%y", errors="coerce")
     fechas_validas = [fechas[i] for i in range(len(fechas_dt)) if not pd.isnull(fechas_dt[i])]
     fechas_dt = [f for f in fechas_dt if not pd.isnull(f)]
 
-    # Indicator selection
+    # Selección de indicadores
     indicadores = df[id_vars[0]].unique().tolist()
     indicador_sel = st.multiselect("Selecciona uno o más indicadores para analizar:", indicadores, default=indicadores)
 
-    # Advanced date filters
-    agrupamiento = st.radio("Agrupar por:", ["Día", "Semana (L-D)", "Mes", "Rango personalizado"], horizontal=True)
-
-    # Melt: transforma tu DataFrame a formato largo
+    # Transforma a formato largo
     df_melt = df[df[id_vars[0]].isin(indicador_sel)].melt(
         id_vars=id_vars,
         value_vars=fechas_validas,
@@ -60,30 +56,42 @@ try:
         value_name='Valor'
     )
     df_melt["Fecha_dt"] = pd.to_datetime(df_melt["Fecha"], format="%d-%b-%y", errors="coerce")
-    df_melt = df_melt.dropna(subset=["Fecha_dt"])
     df_melt["Valor"] = pd.to_numeric(df_melt["Valor"], errors="coerce")
+    df_melt = df_melt.dropna(subset=["Fecha_dt"])
 
-    # Filtrado de fechas según agrupamiento
+    # Filtros de fechas robustos
+    agrupamiento = st.radio("Agrupar por:", ["Día", "Semana (L-D)", "Mes", "Rango personalizado"], horizontal=True)
+
+    mask_fecha = pd.Series([True] * len(df_melt))
     if agrupamiento == "Día":
-        fechas_unicas = df_melt["Fecha_dt"].dt.strftime("%d-%b-%Y").unique().tolist()
-        fechas_sel = st.multiselect("Selecciona días:", fechas_unicas, default=fechas_unicas[-7:])
-        mask_fecha = df_melt["Fecha_dt"].dt.strftime("%d-%b-%Y").isin(fechas_sel)
+        fechas_unicas = df_melt["Fecha_dt"].dt.strftime("%d-%b-%Y").dropna().unique().tolist()
+        if fechas_unicas:
+            fechas_sel = st.multiselect("Selecciona días:", fechas_unicas, default=fechas_unicas[-7:])
+            mask_fecha = df_melt["Fecha_dt"].dt.strftime("%d-%b-%Y").isin(fechas_sel)
+        else:
+            st.warning("No hay días válidos para mostrar.")
+            mask_fecha = pd.Series([False] * len(df_melt))
     elif agrupamiento == "Semana (L-D)":
-        df_melt["Semana"] = df_melt["Fecha_dt"].dt.isocalendar().week
-        semanas_disponibles = sorted(df_melt["Semana"].unique())
-        semana_sel = st.select_slider("Selecciona semana:", options=semanas_disponibles, value=semanas_disponibles[-1])
-        mask_fecha = df_melt["Semana"] == semana_sel
+        semanas_disponibles = sorted(df_melt["Fecha_dt"].dt.isocalendar().week.dropna().unique())
+        if semanas_disponibles:
+            semana_sel = st.select_slider("Selecciona semana:", options=semanas_disponibles, value=semanas_disponibles[-1])
+            mask_fecha = df_melt["Fecha_dt"].dt.isocalendar().week == semana_sel
+        else:
+            st.warning("No hay semanas válidas para mostrar.")
+            mask_fecha = pd.Series([False] * len(df_melt))
     elif agrupamiento == "Mes":
-        df_melt["Mes"] = df_melt["Fecha_dt"].dt.strftime("%B %Y")
-        meses_disponibles = sorted(df_melt["Mes"].unique())
-        mes_sel = st.selectbox("Selecciona mes:", options=meses_disponibles, index=len(meses_disponibles)-1)
-        mask_fecha = df_melt["Mes"] == mes_sel
+        meses_disponibles = sorted(df_melt["Fecha_dt"].dt.strftime("%B %Y").dropna().unique())
+        if meses_disponibles:
+            mes_sel = st.selectbox("Selecciona mes:", options=meses_disponibles, index=len(meses_disponibles)-1)
+            mask_fecha = df_melt["Fecha_dt"].dt.strftime("%B %Y") == mes_sel
+        else:
+            st.warning("No hay meses válidos para mostrar.")
+            mask_fecha = pd.Series([False] * len(df_melt))
     else:  # Rango personalizado
         fecha_min, fecha_max = df_melt["Fecha_dt"].min(), df_melt["Fecha_dt"].max()
         fecha_inicio, fecha_fin = st.date_input("Rango de fechas:", [fecha_max - pd.Timedelta(days=14), fecha_max])
         mask_fecha = (df_melt["Fecha_dt"] >= pd.to_datetime(fecha_inicio)) & (df_melt["Fecha_dt"] <= pd.to_datetime(fecha_fin))
 
-    # Aplicar filtro
     df_filtrado_fecha = df_melt[mask_fecha]
 
     # KPIs industriales avanzados
@@ -133,7 +141,7 @@ try:
     # Heatmap específico para WIP
     st.subheader("🌡️ Heatmap WIP (Rojo si > 1200)")
     wip_inds = [w for w in indicador_sel if "wip" in w.lower()]
-    if wip_inds:
+    if wip_inds and not df_filtrado_fecha.empty:
         df_wip = df_filtrado_fecha[df_filtrado_fecha[id_vars[0]].isin(wip_inds)].pivot(index=id_vars[0], columns="Fecha", values="Valor")
         df_wip = df_wip.apply(pd.to_numeric, errors="coerce")
         colorscale = [
@@ -154,16 +162,17 @@ try:
         )
         st.plotly_chart(fig_hm, use_container_width=True)
     else:
-        st.info("Selecciona un indicador WIP para ver el heatmap.")
+        st.info("Selecciona un indicador WIP y rango de fechas válido para ver el heatmap.")
 
     # Descarga de datos filtrados
-    csv = df_filtrado_fecha.to_csv(index=False).encode('utf-8')
-    st.download_button(
-        label="⬇️ Descargar datos filtrados (CSV)",
-        data=csv,
-        file_name='datos_filtrados.csv',
-        mime='text/csv'
-    )
+    if not df_filtrado_fecha.empty:
+        csv = df_filtrado_fecha.to_csv(index=False).encode('utf-8')
+        st.download_button(
+            label="⬇️ Descargar datos filtrados (CSV)",
+            data=csv,
+            file_name='datos_filtrados.csv',
+            mime='text/csv'
+        )
 
     # Ayuda contextual
     with st.expander("ℹ️ ¿Cómo usar este dashboard?"):
