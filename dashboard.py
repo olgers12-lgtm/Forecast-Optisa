@@ -249,7 +249,7 @@ fig.update_layout(
 )
 st.plotly_chart(fig, use_container_width=True)
 
-# --- Heatmap WIP profesional y leyenda ---
+# --- Heatmap WIP profesional sin etiquetas y con transición verde-amarillo suave ---
 wip_inds = [w for w in indicador_sel if "wip" in w.lower()]
 if wip_inds and not df_filtrado_fecha.empty:
     df_wip = df_filtrado_fecha[df_filtrado_fecha[col_indicador].isin(wip_inds)].copy()
@@ -257,11 +257,12 @@ if wip_inds and not df_filtrado_fecha.empty:
     df_wip_pivot = df_wip.pivot(index=col_indicador, columns="Fecha_dt", values="Valor")
     df_wip_pivot = df_wip_pivot.sort_index(axis=1)
     colorscale = [
-        [0.0, "#A3FFAE"],     # Verde hasta 800
-        [0.53, "#F6F658"],    # Amarillo (~800)
-        [0.75, "#F6AE2D"],    # Naranja (~1200)
-        [0.92, "#F74B36"],    # Rojo claro
-        [1.0, "#8B0000"]      # Rojo oscuro crítico
+        [0.0, "#A3FFAE"],    # Verde claro (WIP bajo)
+        [0.6, "#B6FF6B"],    # Verde más intenso (WIP ~900)
+        [0.67, "#F6F658"],   # Amarillo suave (WIP ~1000)
+        [0.8, "#F6AE2D"],    # Naranja (WIP ~1200)
+        [0.92, "#F74B36"],   # Rojo claro
+        [1.0, "#8B0000"]     # Rojo oscuro (crítico)
     ]
     vmax = max(1500, float(df_wip_pivot.max().max() if not df_wip_pivot.empty else 0))
     fig_hm = px.imshow(
@@ -283,16 +284,6 @@ if wip_inds and not df_filtrado_fecha.empty:
     )
     st.markdown("<h2 style='color:#61C0BF'>🌡️ Heatmap WIP</h2>", unsafe_allow_html=True)
     st.plotly_chart(fig_hm, use_container_width=True)
-    # Leyenda visual de colores/rangos
-    st.markdown("""
-<div style='display:flex;flex-wrap:wrap;gap:18px;margin-top:12px;'>
-  <div style='background:#A3FFAE;padding:8px 16px;border-radius:6px;font-weight:bold;'>WIP &lt; 800 (Óptimo)</div>
-  <div style='background:#F6F658;padding:8px 16px;border-radius:6px;font-weight:bold;'>WIP 800-1200 (Alerta)</div>
-  <div style='background:#F6AE2D;padding:8px 16px;border-radius:6px;font-weight:bold;color:#222;'>WIP 1200-1380 (Naranja)</div>
-  <div style='background:#F74B36;padding:8px 16px;border-radius:6px;font-weight:bold;color:#fff;'>WIP 1380-1500 (Rojo)</div>
-  <div style='background:#8B0000;padding:8px 16px;border-radius:6px;font-weight:bold;color:#fff;'>WIP &gt; 1500 (Crítico)</div>
-</div>
-""", unsafe_allow_html=True)
 else:
     st.info("Selecciona un indicador WIP y rango de fechas válido para ver el heatmap.")
 
