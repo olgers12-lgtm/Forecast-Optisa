@@ -32,33 +32,39 @@ def cargar_datos(sheet_id, sheet_name):
 
 try:
     df = cargar_datos(SHEET_ID, SHEET_NAME)
-    
-    # Detect columna de indicador (robusto para nombres diferentes)
+    # --- Mostramos columnas para depuración ---
+    st.write("Columnas detectadas:", df.columns.tolist())
+    st.write(df.head())
+
+    # --- Detecta columna clave con limpieza de espacios ---
     col_indicador = None
     for c in df.columns:
         if "indicador" in c.lower():
             col_indicador = c
             break
     if not col_indicador:
-        st.error("No se encontró columna de 'Indicador' en los datos.")
+        st.error("No se encontró columna 'Indicador'. Las columnas son: " + str(df.columns.tolist()))
         st.stop()
+    # Limpia espacios en el nombre si los hubiera
+    col_indicador = col_indicador.strip()
 
-    # Elimina filas vacías en columna clave
-    df = df[df[col_indicador].notnull()]
+    # --- Elimina filas vacías en columna clave ---
+    df = df[df[col_indicador].notnull() & (df[col_indicador] != '')]
 
-    # Detecta columnas de fechas
-    cols = df.columns.tolist()
-    fechas = [c for c in cols if c != col_indicador]
-    # Solo fechas válidas
+    # --- Detecta columnas de fechas ---
+    fechas = [c for c in df.columns if c != col_indicador]
+    # Solo usa columnas que parecen fechas válidas
     fechas_dt = pd.to_datetime(fechas, format="%d-%b-%y", errors="coerce")
     fechas_validas = [fechas[i] for i in range(len(fechas_dt)) if not pd.isnull(fechas_dt[i])]
-    fechas_dt = [f for f in fechas_dt if not pd.isnull(f)]
+    if not fechas_validas:
+        st.warning("No hay columnas de fechas válidas. Revisar encabezados.")
+        st.stop()
 
-    # Selección de indicadores
+    # --- Selección de indicadores ---
     indicadores = df[col_indicador].unique().tolist()
     indicador_sel = st.multiselect("Selecciona uno o más indicadores para analizar:", indicadores, default=indicadores)
 
-    # Transforma a formato largo
+    # --- Transforma a formato largo (melt) ---
     df_melt = df[df[col_indicador].isin(indicador_sel)].melt(
         id_vars=[col_indicador],
         value_vars=fechas_validas,
@@ -69,7 +75,7 @@ try:
     df_melt["Valor"] = pd.to_numeric(df_melt["Valor"], errors="coerce")
     df_melt = df_melt.dropna(subset=["Fecha_dt"])
 
-    # Filtros de fechas robustos
+    # --- Filtros de fechas robustos ---
     agrupamiento = st.radio("Agrupar por:", ["Día", "Semana (L-D)", "Mes", "Rango personalizado"], horizontal=True)
 
     mask_fecha = pd.Series([True] * len(df_melt))
@@ -104,7 +110,7 @@ try:
 
     df_filtrado_fecha = df_melt[mask_fecha]
 
-    # KPIs industriales avanzados
+    # --- KPIs industriales avanzados ---
     st.subheader("🔢 KPIs industriales")
     col1, col2, col3, col4 = st.columns(4)
     try:
@@ -127,7 +133,7 @@ try:
     except Exception as e:
         st.warning(f"KPIs industriales no disponibles. Error: {e}")
 
-    # Gráfico interactivo
+    # --- Gráfico interactivo ---
     st.subheader("📈 Evolución temporal")
     try:
         fig = go.Figure()
@@ -151,7 +157,7 @@ try:
     except Exception as e:
         st.warning(f"No se pudo graficar evolución temporal. Error: {e}")
 
-    # Heatmap específico para WIP
+    # --- Heatmap específico para WIP ---
     st.subheader("🌡️ Heatmap WIP (Rojo si > 1200)")
     wip_inds = [w for w in indicador_sel if "wip" in w.lower()]
     if wip_inds and not df_filtrado_fecha.empty:
@@ -180,7 +186,7 @@ try:
     else:
         st.info("Selecciona un indicador WIP y rango de fechas válido para ver el heatmap.")
 
-    # Descarga de datos filtrados
+    # --- Descarga de datos filtrados ---
     if not df_filtrado_fecha.empty:
         csv = df_filtrado_fecha.to_csv(index=False).encode('utf-8')
         st.download_button(
@@ -197,7 +203,7 @@ try:
         else:
             st.info("Haz clic en el botón para mostrar la hoja completa sólo si la necesitas.")
 
-    # Ayuda contextual
+    # --- Ayuda contextual ---
     with st.expander("ℹ️ ¿Cómo usar este dashboard?"):
         st.markdown("""
         - **KPIs**: resumen dinámico de totales, promedios y extremos para cada indicador.
