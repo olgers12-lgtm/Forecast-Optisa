@@ -81,6 +81,11 @@ df_melt["Fecha_dt"] = pd.to_datetime(df_melt["Fecha"].apply(agregar_ano), format
 df_melt["Valor"] = pd.to_numeric(df_melt["Valor"], errors="coerce")
 df_melt = df_melt.dropna(subset=["Fecha_dt"])
 
+# --- Determina día y semana actuales para los filtros ---
+hoy = datetime.today().date()
+semana_actual = datetime.today().isocalendar().week
+año_actual = datetime.today().isocalendar().year
+
 # --- SIDEBAR FILTROS MODERNOS ---
 with st.sidebar:
     st.markdown("<h2 style='color:#0D8ABC'>📅 Filtros de Fechas</h2>", unsafe_allow_html=True)
@@ -91,9 +96,10 @@ with st.sidebar:
     )
     if "Día" in filtro_tipo:
         fechas_disponibles = sorted(df_melt["Fecha_dt"].dt.date.unique())
+        default_dia = hoy if hoy in fechas_disponibles else fechas_disponibles[-1]
         fechas_sel = st.date_input(
             "Selecciona uno o más días:",
-            value=fechas_disponibles[-1],
+            value=default_dia,
             min_value=min(fechas_disponibles),
             max_value=max(fechas_disponibles),
             format="DD/MM/YYYY"
@@ -106,13 +112,18 @@ with st.sidebar:
         df_melt["SemanaISO"] = df_melt["Fecha_dt"].dt.isocalendar().week
         df_melt["AñoISO"] = df_melt["Fecha_dt"].dt.isocalendar().year
         semanas_unicas = sorted(df_melt[["AñoISO", "SemanaISO"]].drop_duplicates().values.tolist())
+        try:
+            semana_default_idx = next(i for i, (year, week) in enumerate(semanas_unicas) if year == año_actual and week == semana_actual)
+        except StopIteration:
+            semana_default_idx = len(semanas_unicas) - 1
         semana_labels = [
             f"Semana {week} ({df_melt[(df_melt['AñoISO'] == year) & (df_melt['SemanaISO'] == week)]['Fecha_dt'].min().strftime('%d-%b')} - {df_melt[(df_melt['AñoISO'] == year) & (df_melt['SemanaISO'] == week)]['Fecha_dt'].max().strftime('%d-%b')})"
             for year, week in semanas_unicas
         ]
         semana_sel_idx = st.selectbox(
             "Selecciona semana:", options=range(len(semanas_unicas)),
-            format_func=lambda i: semana_labels[i]
+            format_func=lambda i: semana_labels[i],
+            index=semana_default_idx
         )
         year_sel, week_sel = semanas_unicas[semana_sel_idx]
         mask_fecha = (df_melt["AñoISO"] == year_sel) & (df_melt["SemanaISO"] == week_sel)
@@ -124,12 +135,11 @@ with st.sidebar:
         fecha_min, fecha_max = df_melt["Fecha_dt"].min(), df_melt["Fecha_dt"].max()
         fecha_rango = st.date_input(
             "Selecciona el rango de fechas:",
-            value=(fecha_max - pd.Timedelta(days=7), fecha_max),
+            value=(hoy, hoy) if fecha_min <= hoy <= fecha_max else (fecha_max - pd.Timedelta(days=7), fecha_max),
             min_value=fecha_min,
             max_value=fecha_max,
             format="DD/MM/YYYY"
         )
-        # Validación: Si solo un día, muestra advertencia y NO filtra
         if not isinstance(fecha_rango, (list, tuple)) or len(fecha_rango) != 2 or fecha_rango[0] == fecha_rango[1]:
             st.warning("Por favor selecciona un rango de fechas válido (más de un día).")
             mask_fecha = pd.Series([False]*len(df_melt))
@@ -197,7 +207,6 @@ kpi_cols[3].markdown(
 )
 
 # --- Alertas WIP solo hoy ---
-hoy = datetime.today().date()
 df_hoy = df_filtrado_fecha[df_filtrado_fecha["Fecha_dt"].dt.date == hoy]
 wip_hoy = df_hoy[df_hoy[col_indicador].str.lower().str.contains("wip")]['Valor']
 
