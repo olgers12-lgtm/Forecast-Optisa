@@ -157,7 +157,7 @@ with st.sidebar:
 df_filtrado_fecha = df_melt[mask_fecha]
 
 # --- KPIs INDUSTRIALES ESTÉTICOS ---
-st.markdown("<h2 style='color:#F6AE2D'>🧮 KPIs Industriales</h2>", unsafe_allow_html=True)
+st.markdown("<h2 style='color:#F6AE2D'>🧮 KPIs Optisa</h2>", unsafe_allow_html=True)
 kpi_cols = st.columns(4)
 
 entrada_real = df_filtrado_fecha[df_filtrado_fecha[col_indicador].str.lower().str.contains("entrada real")]['Valor'].sum()
