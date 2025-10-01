@@ -7,7 +7,7 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import json
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # --- CONFIGURACIÓN MODERNA ---
 st.set_page_config(
@@ -133,19 +133,26 @@ with st.sidebar:
         mask_fecha = df_melt["Fecha_dt"].dt.strftime("%B %Y") == mes_sel
     else:
         fecha_min, fecha_max = df_melt["Fecha_dt"].min(), df_melt["Fecha_dt"].max()
+        fecha_min_date = fecha_min.date()
+        fecha_max_date = fecha_max.date()
+        try:
+            value_default = (hoy, hoy) if fecha_min_date <= hoy <= fecha_max_date else (fecha_max_date - timedelta(days=7), fecha_max_date)
+        except Exception:
+            value_default = (fecha_max_date - timedelta(days=7), fecha_max_date)
         fecha_rango = st.date_input(
             "Selecciona el rango de fechas:",
-            value=(hoy, hoy) if fecha_min <= hoy <= fecha_max else (fecha_max - pd.Timedelta(days=7), fecha_max),
-            min_value=fecha_min,
-            max_value=fecha_max,
+            value=value_default,
+            min_value=fecha_min_date,
+            max_value=fecha_max_date,
             format="DD/MM/YYYY"
         )
+        # Validación: Si solo un día, muestra advertencia y NO filtra
         if not isinstance(fecha_rango, (list, tuple)) or len(fecha_rango) != 2 or fecha_rango[0] == fecha_rango[1]:
             st.warning("Por favor selecciona un rango de fechas válido (más de un día).")
             mask_fecha = pd.Series([False]*len(df_melt))
         else:
-            fecha_inicio, fecha_fin = fecha_rango
-            mask_fecha = (df_melt["Fecha_dt"] >= pd.to_datetime(fecha_inicio)) & (df_melt["Fecha_dt"] <= pd.to_datetime(fecha_fin))
+            fecha_inicio, fecha_fin = [pd.Timestamp(f) for f in fecha_rango]
+            mask_fecha = (df_melt["Fecha_dt"] >= fecha_inicio) & (df_melt["Fecha_dt"] <= fecha_fin)
 
 df_filtrado_fecha = df_melt[mask_fecha]
 
