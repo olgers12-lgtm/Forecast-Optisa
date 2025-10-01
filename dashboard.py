@@ -11,7 +11,7 @@ from datetime import datetime
 
 # --- CONFIGURACIÓN MODERNA ---
 st.set_page_config(
-    page_title="Dashboard de Producción",
+    page_title="🚀 Dashboard Ejecutivo de Producción",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -122,19 +122,25 @@ with st.sidebar:
         mask_fecha = df_melt["Fecha_dt"].dt.strftime("%B %Y") == mes_sel
     else:
         fecha_min, fecha_max = df_melt["Fecha_dt"].min(), df_melt["Fecha_dt"].max()
-        fecha_inicio, fecha_fin = st.date_input(
+        fecha_rango = st.date_input(
             "Selecciona el rango de fechas:",
             value=(fecha_max - pd.Timedelta(days=7), fecha_max),
             min_value=fecha_min,
             max_value=fecha_max,
             format="DD/MM/YYYY"
         )
-        mask_fecha = (df_melt["Fecha_dt"] >= pd.to_datetime(fecha_inicio)) & (df_melt["Fecha_dt"] <= pd.to_datetime(fecha_fin))
+        # Validación: Si solo un día, muestra advertencia y NO filtra
+        if not isinstance(fecha_rango, (list, tuple)) or len(fecha_rango) != 2 or fecha_rango[0] == fecha_rango[1]:
+            st.warning("Por favor selecciona un rango de fechas válido (más de un día).")
+            mask_fecha = pd.Series([False]*len(df_melt))
+        else:
+            fecha_inicio, fecha_fin = fecha_rango
+            mask_fecha = (df_melt["Fecha_dt"] >= pd.to_datetime(fecha_inicio)) & (df_melt["Fecha_dt"] <= pd.to_datetime(fecha_fin))
 
 df_filtrado_fecha = df_melt[mask_fecha]
 
 # --- KPIs INDUSTRIALES ESTÉTICOS ---
-st.markdown("<h2 style='color:#F6AE2D'>🧮 KPIs Optisa</h2>", unsafe_allow_html=True)
+st.markdown("<h2 style='color:#F6AE2D'>🧮 KPIs Industriales</h2>", unsafe_allow_html=True)
 kpi_cols = st.columns(4)
 
 entrada_real = df_filtrado_fecha[df_filtrado_fecha[col_indicador].str.lower().str.contains("entrada real")]['Valor'].sum()
