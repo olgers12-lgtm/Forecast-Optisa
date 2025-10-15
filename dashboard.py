@@ -10,7 +10,7 @@ import re
 from datetime import datetime, timedelta
 
 st.set_page_config(
-    page_title="🚀 Dashboard Ejecutivo de Producción",
+    page_title=" Dashboard de Producción",
     layout="wide",
     initial_sidebar_state="expanded"
 )
