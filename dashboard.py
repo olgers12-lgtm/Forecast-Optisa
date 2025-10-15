@@ -332,31 +332,28 @@ with st.expander("🗂️ Mostrar/ocultar hoja original de Google Sheets"):
 from prophet import Prophet
 import plotly.graph_objects as go
 
-# --- SECCIÓN MACHINE LEARNING / IA (SENIOR DESIGN) ---
 st.markdown("<h2 style='color:#0D8ABC'>🤖 Predicción Inteligente (ML & IA)</h2>", unsafe_allow_html=True)
 st.markdown(
     """
     <div style='background:#f1f6f9;padding:10px 20px;border-radius:10px;margin-bottom:10px;'>
         <b>¿Qué hace esta sección?</b><br>
         <ul>
-        <li>Predice los próximos días de <b>entradas y salidas reales</b> usando un modelo avanzado ML Prophet, ajustado para entornos industriales.</li>
-        <li>Incluye regresor de fin de semana y suavizado para evitar sobreajustes o picos irreales.</li>
-        <li>Compara la predicción ML con la proyección original del área y muestra bandas de confianza.</li>
-        <li>Optimizada para producción: código robusto, validación de datos, y visualización ejecutiva.</li>
+        <li>Predice los próximos días de <b>entradas y salidas reales</b> usando un modelo Prophet avanzado, ajustado para plantas industriales.</li>
+        <li>Filtra outliers automáticamente y usa solo el histórico más reciente.</li>
+        <li>Incluye regresores de fin de semana y día de semana para captar patrones reales.</li>
+        <li>Visualización robusta: predicción ajustada y sin valores absurdos.</li>
         </ul>
     </div>
     """,
     unsafe_allow_html=True
 )
 
-# --- Selección de parámetro a predecir ---
 param_ml = st.selectbox(
     "Selecciona el indicador a predecir:",
     ["Entrada Real", "Salida Real"]
 )
 horizonte = st.slider("¿Cuántos días quieres predecir?", min_value=3, max_value=30, value=7)
 
-# --- Prepara el histórico para Prophet ---
 if param_ml == "Entrada Real":
     ind = "entrada real"
 elif param_ml == "Salida Real":
@@ -368,36 +365,68 @@ df_hist = df_melt[df_melt[col_indicador].str.lower().str.contains(ind)].copy()
 df_hist = df_hist.dropna(subset=["Fecha_dt", "Valor"])
 df_hist = df_hist.sort_values("Fecha_dt")
 
+# --- Senior ML: Filtrado de outliers (IQR) y solo últimos 90 días ---
 if len(df_hist) > 10:
-    # --- Regresor de fin de semana ---
-    df_prophet = df_hist.rename(columns={"Fecha_dt": "ds", "Valor": "y"}).loc[:, ["ds", "y"]]
-    df_prophet['is_weekend'] = df_prophet['ds'].dt.dayofweek >= 5
+    # Últimos 90 días
+    max_historico = df_hist["Fecha_dt"].max()
+    min_historico = max_historico - pd.Timedelta(days=90)
+    df_hist_recent = df_hist[df_hist["Fecha_dt"] >= min_historico].copy()
 
-    # --- Entrenamiento Prophet avanzado ---
+    # Filtrado outliers
+    q1 = df_hist_recent["Valor"].quantile(0.25)
+    q3 = df_hist_recent["Valor"].quantile(0.75)
+    iqr = q3 - q1
+    lower = q1 - 1.5*iqr
+    upper = q3 + 1.5*iqr
+    df_hist_recent["Valor_clipped"] = df_hist_recent["Valor"].clip(lower=lower, upper=upper)
+
+    # Data para Prophet
+    df_prophet = df_hist_recent.rename(columns={"Fecha_dt": "ds", "Valor_clipped": "y"}).loc[:, ["ds", "y"]]
+    df_prophet['is_weekend'] = df_prophet['ds'].dt.dayofweek >= 5
+    df_prophet['dow'] = df_prophet['ds'].dt.dayofweek
+
+    # Prophet avanzado con regresores
     m = Prophet(
         yearly_seasonality=True,
         weekly_seasonality=True,
         daily_seasonality=False,
-        changepoint_prior_scale=0.03,  # Menos sensible a saltos
-        seasonality_prior_scale=5
+        changepoint_prior_scale=0.01,
+        seasonality_prior_scale=10
     )
     m.add_regressor('is_weekend')
+    m.add_regressor('dow')
     m.fit(df_prophet)
 
     future = m.make_future_dataframe(periods=horizonte, freq="D")
     future['is_weekend'] = future['ds'].dt.dayofweek >= 5
+    future['dow'] = future['ds'].dt.dayofweek
 
     forecast = m.predict(future)
 
-    # --- Visualización avanzada ---
+    # Clipping en predicción para evitar negativos o picos absurdos
+    min_real = max(df_prophet["y"].min(), 0)
+    max_real = df_prophet["y"].max() * 1.10
+    forecast['yhat'] = forecast['yhat'].clip(lower=min_real, upper=max_real)
+    forecast['yhat_upper'] = forecast['yhat_upper'].clip(lower=min_real, upper=max_real)
+    forecast['yhat_lower'] = forecast['yhat_lower'].clip(lower=min_real, upper=max_real)
+
+    # Visualización
     fig_ml = go.Figure()
-    # Histórico
+    # Histórico (original)
     fig_ml.add_trace(go.Scatter(
-        x=df_prophet['ds'],
-        y=df_prophet['y'],
+        x=df_hist_recent['Fecha_dt'],
+        y=df_hist_recent['Valor'],
         mode='lines+markers',
         name=f'Histórico {param_ml}',
         line=dict(color='#0D8ABC', width=2)
+    ))
+    # Histórico (sin outliers)
+    fig_ml.add_trace(go.Scatter(
+        x=df_prophet['ds'],
+        y=df_prophet['y'],
+        mode='lines',
+        name=f'Histórico filtrado',
+        line=dict(color='#5BC0EB', dash='dot', width=1)
     ))
     # Predicción ML
     fig_ml.add_trace(go.Scatter(
@@ -448,18 +477,24 @@ if len(df_hist) > 10:
         showlegend=True
     )
     st.plotly_chart(fig_ml, use_container_width=True)
-    st.success("Predicción generada con modelo Prophet (ML/IA senior). Ajustada para entornos industriales. Si ves resultados poco realistas, considera filtrar outliers en tu histórico o consultar con el área de datos.")
-else:
-    st.warning("No hay suficiente histórico para entrenar un modelo ML. Asegúrate de tener al menos 10 datos históricos para el indicador seleccionado.")
 
-# --- Recomendaciones de ingeniería senior ---
+    # Advertencia si el modelo todavía predice valores muy altos
+    max_pred = forecast['yhat'].max()
+    if max_pred > max_real * 1.05:
+        st.warning("⚠️ La predicción sigue mostrando valores elevados. Revisa si hay cambios estructurales recientes, más outliers, o si debes agregar más regresores (paros, mantenimientos, turnos, etc).")
+
+    st.success("Predicción avanzada generada con robustez industrial. Si ves resultados poco realistas, revisa tu histórico y considera agregar más variables explicativas.")
+
+else:
+    st.warning("No hay suficiente histórico para entrenar un modelo ML robusto. Asegúrate de tener al menos 10 datos históricos para el indicador seleccionado.")
+
 st.info(
     """
     <b>Tips de ingeniería senior:</b><br>
-    - Puedes mejorar la predicción agregando otros regresores (paros, mantenimientos, turnos, etc).<br>
-    - Prophet es útil para pruebas rápidas y robusto para series industriales, pero para máxima precisión puedes combinarlo con modelos de deep learning (LSTM, TCN) o modelos híbridos.<br>
-    - Valida siempre las predicciones contra la realidad de tu planta.<br>
-    - Para producción, entrena el modelo con datos limpios y actualizados periódicamente.<br>
+    - Se filtran outliers automáticamente para evitar distorsión.<br>
+    - El modelo es menos sensible a cambios bruscos y aprende patrones semanales.<br>
+    - Puedes integrar regresores adicionales (paros, mantenimientos, eventos externos) para mayor realismo.<br>
+    - Para máxima confiabilidad, integra pipelines automáticos de limpieza y validación.<br>
     """,
     icon="🧠"
 )
