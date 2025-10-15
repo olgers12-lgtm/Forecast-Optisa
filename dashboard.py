@@ -329,3 +329,109 @@ with st.expander("🗂️ Mostrar/ocultar hoja original de Google Sheets"):
         st.dataframe(df, use_container_width=True)
     else:
         st.info("Haz clic en el botón para mostrar la hoja completa sólo si la necesitas.")
+        from prophet import Prophet
+import plotly.graph_objects as go
+
+st.markdown("<h2 style='color:#0D8ABC'>🤖 Predicción Inteligente (ML)</h2>", unsafe_allow_html=True)
+st.markdown(
+    """
+    <div style='background:#f1f6f9;padding:10px 20px;border-radius:10px;margin-bottom:10px;'>
+        <b>¿Qué hace esta sección?</b><br>
+        Predice los próximos días de <b>entradas y salidas reales</b> usando Machine Learning (modelo Prophet). 
+        La predicción se compara con las proyecciones originales del área y se ilustra junto al histórico.
+    </div>
+    """,
+    unsafe_allow_html=True
+)
+
+# --- Selección de parámetro a predecir ---
+param_ml = st.selectbox(
+    "Selecciona el indicador a predecir:",
+    ["Entrada Real", "Salida Real"]
+)
+horizonte = st.slider("¿Cuántos días quieres predecir?", min_value=3, max_value=30, value=7)
+
+# --- Prepara el histórico para Prophet ---
+if param_ml == "Entrada Real":
+    ind = "entrada real"
+elif param_ml == "Salida Real":
+    ind = "salida real"
+else:
+    ind = "entrada real"
+
+df_hist = df_melt[df_melt[col_indicador].str.lower().str.contains(ind)].copy()
+df_hist = df_hist.dropna(subset=["Fecha_dt", "Valor"])
+df_hist = df_hist.sort_values("Fecha_dt")
+df_prophet = df_hist.rename(columns={"Fecha_dt": "ds", "Valor": "y"}).loc[:, ["ds", "y"]]
+
+if len(df_prophet) > 10:
+    # --- Entrenamiento rápido del modelo Prophet ---
+    m = Prophet(daily_seasonality=True, yearly_seasonality=True, weekly_seasonality=True)
+    m.fit(df_prophet)
+
+    future = m.make_future_dataframe(periods=horizonte, freq="D")
+    forecast = m.predict(future)
+
+    # --- Visualización ---
+    fig_ml = go.Figure()
+    # Histórico
+    fig_ml.add_trace(go.Scatter(
+        x=df_prophet['ds'],
+        y=df_prophet['y'],
+        mode='lines+markers',
+        name=f'Histórico {param_ml}',
+        line=dict(color='#0D8ABC')
+    ))
+    # Predicción ML
+    fig_ml.add_trace(go.Scatter(
+        x=forecast['ds'],
+        y=forecast['yhat'],
+        mode='lines',
+        name='Predicción ML',
+        line=dict(color='#F6AE2D', dash='dash')
+    ))
+    # Banda de confianza
+    fig_ml.add_trace(go.Scatter(
+        x=forecast['ds'],
+        y=forecast['yhat_upper'],
+        line=dict(color='rgba(246,174,45,0.2)'),
+        name='Confianza Superior',
+        showlegend=False
+    ))
+    fig_ml.add_trace(go.Scatter(
+        x=forecast['ds'],
+        y=forecast['yhat_lower'],
+        fill='tonexty',
+        fillcolor='rgba(246,174,45,0.18)',
+        line=dict(color='rgba(246,174,45,0.2)'),
+        name='Confianza Inferior',
+        showlegend=False
+    ))
+
+    # Proyección original del área (si existe)
+    ind_proj = "entrada-proyectada" if ind == "entrada real" else "salida proyectada"
+    df_proj = df_melt[df_melt[col_indicador].str.lower().str.contains(ind_proj)].copy()
+    if not df_proj.empty:
+        df_proj = df_proj.set_index("Fecha_dt").sort_index()
+        fig_ml.add_trace(go.Scatter(
+            x=df_proj.index,
+            y=df_proj["Valor"],
+            mode='lines+markers',
+            name=f'Proyección Área',
+            line=dict(color='#61C0BF', dash='dot', width=2)
+        ))
+
+    fig_ml.update_layout(
+        xaxis_title="Fecha",
+        yaxis_title="Valor",
+        hovermode="x unified",
+        template="plotly_white",
+        margin=dict(l=30, r=30, t=40, b=40),
+        font=dict(family="Segoe UI,Roboto,Arial", size=15),
+        showlegend=True
+    )
+    st.plotly_chart(fig_ml, use_container_width=True)
+    st.success("Predicción generada con éxito. Puedes ajustar el horizonte de días y comparar con la proyección original.")
+else:
+    st.warning("No hay suficiente histórico para entrenar un modelo ML. Asegúrate de tener al menos 10 datos históricos para el indicador seleccionado.")
+
