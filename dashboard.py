@@ -9,6 +9,7 @@ import json
 import re
 from datetime import datetime, timedelta
 
+# --- CONFIGURACIÓN ---
 st.set_page_config(
     page_title="🚀 Dashboard Ejecutivo de Producción",
     layout="wide",
@@ -19,7 +20,6 @@ CORPORATE_COLORS = [
     "#1F2A56", "#0D8ABC", "#3EC0ED", "#61C0BF", "#F6AE2D", "#F74B36", "#A3FFAE"
 ]
 WIP_THRESHOLDS = {"Alerta": 1200, "Crítico": 1500}
-EFFICIENCY_GOAL = 95
 
 SHEET_ID = "1U3DwxRVqQFwuPUs0-zvmitgz_LWdhScy-3fu-awBOHU"
 SHEET_NAME = "Produccion"
@@ -155,19 +155,26 @@ with st.sidebar:
 
 df_filtrado_fecha = df_melt[mask_fecha]
 
-# --------- KPIs INDUSTRIALES DINÁMICOS ---------
+# --------- KPIs INDUSTRIALES DINÁMICOS ACUMULADO AL CORTE ---------
 st.markdown("<h2 style='color:#F6AE2D'>🧮 KPIs Optisa</h2>", unsafe_allow_html=True)
 kpi_cols = st.columns(4)
 
-# --- KPIs: para semana y mes, usar ACUMULADO de rango filtrado ---
-entrada_real = df_filtrado_fecha[df_filtrado_fecha[col_indicador].str.lower().str.contains("entrada real")]['Valor'].sum()
-entrada_proj = df_filtrado_fecha[df_filtrado_fecha[col_indicador].str.lower().str.contains("entrada-proyectada")]['Valor'].sum()
-salida_real = df_filtrado_fecha[df_filtrado_fecha[col_indicador].str.lower().str.contains("salida real")]['Valor'].sum()
-salida_proj = df_filtrado_fecha[df_filtrado_fecha[col_indicador].str.lower().str.contains("salida proyectada")]['Valor'].sum()
-wip = df_filtrado_fecha[df_filtrado_fecha[col_indicador].str.lower().str.contains("wip")]['Valor']
-delta_entrada = entrada_real - entrada_proj if entrada_proj else None
-delta_salida = salida_real - salida_proj if salida_proj else None
-eficiencia = salida_real / salida_proj * 100 if salida_proj > 0 else None
+# Acumulado hasta el último día seleccionado en el rango filtrado
+if not df_filtrado_fecha.empty:
+    fecha_corte = df_filtrado_fecha["Fecha_dt"].max()
+    df_corte = df_filtrado_fecha[df_filtrado_fecha["Fecha_dt"] <= fecha_corte]
+    entrada_real = df_corte[df_corte[col_indicador].str.lower().str.contains("entrada real")]['Valor'].sum()
+    entrada_proj = df_corte[df_corte[col_indicador].str.lower().str.contains("entrada-proyectada")]['Valor'].sum()
+    salida_real = df_corte[df_corte[col_indicador].str.lower().str.contains("salida real")]['Valor'].sum()
+    salida_proj = df_corte[df_corte[col_indicador].str.lower().str.contains("salida proyectada")]['Valor'].sum()
+    wip = df_corte[df_corte[col_indicador].str.lower().str.contains("wip")]['Valor']
+    delta_entrada = entrada_real - entrada_proj if entrada_proj else None
+    delta_salida = salida_real - salida_proj if salida_proj else None
+    eficiencia = salida_real / salida_proj * 100 if salida_proj > 0 else None
+else:
+    entrada_real = entrada_proj = salida_real = salida_proj = 0
+    delta_entrada = delta_salida = eficiencia = None
+    wip = pd.Series(dtype=float)
 
 delta_entrada_str = f"{delta_entrada:.1f}" if delta_entrada is not None else "-"
 delta_salida_str = f"{delta_salida:.1f}" if delta_salida is not None else "-"
@@ -231,7 +238,7 @@ if not wip_hoy.empty:
             f"</div>", unsafe_allow_html=True
         )
 
-# --- Mostramos Entradas/Salidas Proyectadas arriba de la gráfica ---
+# --- Mostramos Entradas/Salidas Proyectadas ACUMULADAS abajo ---
 st.markdown("""
 <div style='margin-bottom:20px;padding:12px 16px;background:#f7f7f7;border-radius:12px;box-shadow:0 2px 8px #eee;display:flex;gap:36px;justify-content:center;'>
     <div style='font-size:20px;color:#0D8ABC;'><strong>Entrada Proyectada:</strong> {}</div>
