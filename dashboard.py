@@ -9,9 +9,8 @@ import json
 import re
 from datetime import datetime, timedelta
 
-# --- CONFIGURACIÓN MODERNA ---
 st.set_page_config(
-    page_title=" Dashboard de Producción",
+    page_title="🚀 Dashboard Ejecutivo de Producción",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -81,12 +80,10 @@ df_melt["Fecha_dt"] = pd.to_datetime(df_melt["Fecha"].apply(agregar_ano), format
 df_melt["Valor"] = pd.to_numeric(df_melt["Valor"], errors="coerce")
 df_melt = df_melt.dropna(subset=["Fecha_dt"])
 
-# --- Determina día y semana actuales para los filtros ---
 hoy = datetime.today().date()
 semana_actual = datetime.today().isocalendar().week
 año_actual = datetime.today().isocalendar().year
 
-# --- SIDEBAR FILTROS MODERNOS ---
 with st.sidebar:
     st.markdown("<h2 style='color:#0D8ABC'>📅 Filtros de Fechas</h2>", unsafe_allow_html=True)
     filtro_tipo = st.radio(
@@ -108,6 +105,7 @@ with st.sidebar:
             mask_fecha = df_melt["Fecha_dt"].dt.date.isin(fechas_sel)
         else:
             mask_fecha = df_melt["Fecha_dt"].dt.date == fechas_sel
+        agrupador = "dia"
     elif "Semana" in filtro_tipo:
         df_melt["SemanaISO"] = df_melt["Fecha_dt"].dt.isocalendar().week
         df_melt["AñoISO"] = df_melt["Fecha_dt"].dt.isocalendar().year
@@ -127,10 +125,12 @@ with st.sidebar:
         )
         year_sel, week_sel = semanas_unicas[semana_sel_idx]
         mask_fecha = (df_melt["AñoISO"] == year_sel) & (df_melt["SemanaISO"] == week_sel)
+        agrupador = "semana"
     elif "Mes" in filtro_tipo:
         meses_disponibles = sorted(df_melt["Fecha_dt"].dt.strftime("%B %Y").unique())
         mes_sel = st.selectbox("Selecciona mes:", options=meses_disponibles)
         mask_fecha = df_melt["Fecha_dt"].dt.strftime("%B %Y") == mes_sel
+        agrupador = "mes"
     else:
         fecha_min, fecha_max = df_melt["Fecha_dt"].min(), df_melt["Fecha_dt"].max()
         fecha_min_date = fecha_min.date()
@@ -146,29 +146,55 @@ with st.sidebar:
             max_value=fecha_max_date,
             format="DD/MM/YYYY"
         )
-        # Validación: Si solo un día, muestra advertencia y NO filtra
         if not isinstance(fecha_rango, (list, tuple)) or len(fecha_rango) != 2 or fecha_rango[0] == fecha_rango[1]:
             st.warning("Por favor selecciona un rango de fechas válido (más de un día).")
             mask_fecha = pd.Series([False]*len(df_melt))
         else:
             fecha_inicio, fecha_fin = [pd.Timestamp(f) for f in fecha_rango]
             mask_fecha = (df_melt["Fecha_dt"] >= fecha_inicio) & (df_melt["Fecha_dt"] <= fecha_fin)
+        agrupador = "rango"
 
 df_filtrado_fecha = df_melt[mask_fecha]
 
-# --- KPIs INDUSTRIALES ESTÉTICOS ---
+# --------- KPIs INDUSTRIALES DINÁMICOS ---------
 st.markdown("<h2 style='color:#F6AE2D'>🧮 KPIs Optisa</h2>", unsafe_allow_html=True)
 kpi_cols = st.columns(4)
 
-entrada_real = df_filtrado_fecha[df_filtrado_fecha[col_indicador].str.lower().str.contains("entrada real")]['Valor'].sum()
-entrada_proj = df_filtrado_fecha[df_filtrado_fecha[col_indicador].str.lower().str.contains("entrada-proyectada")]['Valor'].sum()
-salida_real = df_filtrado_fecha[df_filtrado_fecha[col_indicador].str.lower().str.contains("salida real")]['Valor'].sum()
-salida_proj = df_filtrado_fecha[df_filtrado_fecha[col_indicador].str.lower().str.contains("salida proyectada")]['Valor'].sum()
-wip = df_filtrado_fecha[df_filtrado_fecha[col_indicador].str.lower().str.contains("wip")]['Valor']
-
-delta_entrada = entrada_real - entrada_proj if entrada_proj else None
-delta_salida = salida_real - salida_proj if salida_proj else None
-eficiencia = salida_real / salida_proj * 100 if salida_proj > 0 else None
+## --- Nuevo cálculo: para semana y mes, diferencia diaria de proyección y eficiencia
+if agrupador in ["semana", "mes"]:
+    fechas_ordenadas = sorted(df_filtrado_fecha["Fecha_dt"].unique())
+    if fechas_ordenadas:
+        dia_actual = fechas_ordenadas[-1]
+        dia_anterior = fechas_ordenadas[-2] if len(fechas_ordenadas) > 1 else fechas_ordenadas[-1]
+        df_actual = df_filtrado_fecha[df_filtrado_fecha["Fecha_dt"] == dia_actual]
+        df_anterior = df_filtrado_fecha[df_filtrado_fecha["Fecha_dt"] == dia_anterior]
+        # Proyectadas y reales solo del día actual dentro de la semana/mes
+        entrada_real = df_actual[df_actual[col_indicador].str.lower().str.contains("entrada real")]['Valor'].sum()
+        entrada_proj = df_actual[df_actual[col_indicador].str.lower().str.contains("entrada-proyectada")]['Valor'].sum()
+        salida_real = df_actual[df_actual[col_indicador].str.lower().str.contains("salida real")]['Valor'].sum()
+        salida_proj = df_actual[df_actual[col_indicador].str.lower().str.contains("salida proyectada")]['Valor'].sum()
+        wip = df_actual[df_actual[col_indicador].str.lower().str.contains("wip")]['Valor']
+        # Deltas respecto a día anterior (proyectadas y reales)
+        entrada_real_ant = df_anterior[df_anterior[col_indicador].str.lower().str.contains("entrada real")]['Valor'].sum()
+        entrada_proj_ant = df_anterior[df_anterior[col_indicador].str.lower().str.contains("entrada-proyectada")]['Valor'].sum()
+        salida_real_ant = df_anterior[df_anterior[col_indicador].str.lower().str.contains("salida real")]['Valor'].sum()
+        salida_proj_ant = df_anterior[df_anterior[col_indicador].str.lower().str.contains("salida proyectada")]['Valor'].sum()
+        delta_entrada = entrada_real - entrada_proj
+        delta_salida = salida_real - salida_proj
+        eficiencia = (salida_real / salida_proj * 100) if salida_proj > 0 else None
+    else:
+        entrada_real = entrada_proj = salida_real = salida_proj = 0
+        delta_entrada = delta_salida = eficiencia = None
+        wip = pd.Series(dtype=float)
+else:
+    entrada_real = df_filtrado_fecha[df_filtrado_fecha[col_indicador].str.lower().str.contains("entrada real")]['Valor'].sum()
+    entrada_proj = df_filtrado_fecha[df_filtrado_fecha[col_indicador].str.lower().str.contains("entrada-proyectada")]['Valor'].sum()
+    salida_real = df_filtrado_fecha[df_filtrado_fecha[col_indicador].str.lower().str.contains("salida real")]['Valor'].sum()
+    salida_proj = df_filtrado_fecha[df_filtrado_fecha[col_indicador].str.lower().str.contains("salida proyectada")]['Valor'].sum()
+    delta_entrada = entrada_real - entrada_proj if entrada_proj else None
+    delta_salida = salida_real - salida_proj if salida_proj else None
+    eficiencia = salida_real / salida_proj * 100 if salida_proj > 0 else None
+    wip = df_filtrado_fecha[df_filtrado_fecha[col_indicador].str.lower().str.contains("wip")]['Valor']
 
 delta_entrada_str = f"{delta_entrada:.1f}" if delta_entrada is not None else "-"
 delta_salida_str = f"{delta_salida:.1f}" if delta_salida is not None else "-"
@@ -309,7 +335,6 @@ if wip_inds and not df_filtrado_fecha.empty:
 else:
     st.info("Selecciona un indicador WIP y rango de fechas válido para ver el heatmap.")
 
-# --- Descarga y hoja original ---
 if not df_filtrado_fecha.empty:
     csv = df_filtrado_fecha.to_csv(index=False).encode('utf-8')
     st.download_button(
