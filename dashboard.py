@@ -51,7 +51,6 @@ def agregar_ano(col):
         return col
     return None
 
-# --- DATA PREP ---
 df = cargar_datos(SHEET_ID, SHEET_NAME)
 col_indicador = next((c for c in df.columns if "indicador" in c.lower()), None)
 if not col_indicador:
@@ -160,41 +159,15 @@ df_filtrado_fecha = df_melt[mask_fecha]
 st.markdown("<h2 style='color:#F6AE2D'>🧮 KPIs Optisa</h2>", unsafe_allow_html=True)
 kpi_cols = st.columns(4)
 
-## --- Nuevo cálculo: para semana y mes, diferencia diaria de proyección y eficiencia
-if agrupador in ["semana", "mes"]:
-    fechas_ordenadas = sorted(df_filtrado_fecha["Fecha_dt"].unique())
-    if fechas_ordenadas:
-        dia_actual = fechas_ordenadas[-1]
-        dia_anterior = fechas_ordenadas[-2] if len(fechas_ordenadas) > 1 else fechas_ordenadas[-1]
-        df_actual = df_filtrado_fecha[df_filtrado_fecha["Fecha_dt"] == dia_actual]
-        df_anterior = df_filtrado_fecha[df_filtrado_fecha["Fecha_dt"] == dia_anterior]
-        # Proyectadas y reales solo del día actual dentro de la semana/mes
-        entrada_real = df_actual[df_actual[col_indicador].str.lower().str.contains("entrada real")]['Valor'].sum()
-        entrada_proj = df_actual[df_actual[col_indicador].str.lower().str.contains("entrada-proyectada")]['Valor'].sum()
-        salida_real = df_actual[df_actual[col_indicador].str.lower().str.contains("salida real")]['Valor'].sum()
-        salida_proj = df_actual[df_actual[col_indicador].str.lower().str.contains("salida proyectada")]['Valor'].sum()
-        wip = df_actual[df_actual[col_indicador].str.lower().str.contains("wip")]['Valor']
-        # Deltas respecto a día anterior (proyectadas y reales)
-        entrada_real_ant = df_anterior[df_anterior[col_indicador].str.lower().str.contains("entrada real")]['Valor'].sum()
-        entrada_proj_ant = df_anterior[df_anterior[col_indicador].str.lower().str.contains("entrada-proyectada")]['Valor'].sum()
-        salida_real_ant = df_anterior[df_anterior[col_indicador].str.lower().str.contains("salida real")]['Valor'].sum()
-        salida_proj_ant = df_anterior[df_anterior[col_indicador].str.lower().str.contains("salida proyectada")]['Valor'].sum()
-        delta_entrada = entrada_real - entrada_proj
-        delta_salida = salida_real - salida_proj
-        eficiencia = (salida_real / salida_proj * 100) if salida_proj > 0 else None
-    else:
-        entrada_real = entrada_proj = salida_real = salida_proj = 0
-        delta_entrada = delta_salida = eficiencia = None
-        wip = pd.Series(dtype=float)
-else:
-    entrada_real = df_filtrado_fecha[df_filtrado_fecha[col_indicador].str.lower().str.contains("entrada real")]['Valor'].sum()
-    entrada_proj = df_filtrado_fecha[df_filtrado_fecha[col_indicador].str.lower().str.contains("entrada-proyectada")]['Valor'].sum()
-    salida_real = df_filtrado_fecha[df_filtrado_fecha[col_indicador].str.lower().str.contains("salida real")]['Valor'].sum()
-    salida_proj = df_filtrado_fecha[df_filtrado_fecha[col_indicador].str.lower().str.contains("salida proyectada")]['Valor'].sum()
-    delta_entrada = entrada_real - entrada_proj if entrada_proj else None
-    delta_salida = salida_real - salida_proj if salida_proj else None
-    eficiencia = salida_real / salida_proj * 100 if salida_proj > 0 else None
-    wip = df_filtrado_fecha[df_filtrado_fecha[col_indicador].str.lower().str.contains("wip")]['Valor']
+# --- KPIs: para semana y mes, usar ACUMULADO de rango filtrado ---
+entrada_real = df_filtrado_fecha[df_filtrado_fecha[col_indicador].str.lower().str.contains("entrada real")]['Valor'].sum()
+entrada_proj = df_filtrado_fecha[df_filtrado_fecha[col_indicador].str.lower().str.contains("entrada-proyectada")]['Valor'].sum()
+salida_real = df_filtrado_fecha[df_filtrado_fecha[col_indicador].str.lower().str.contains("salida real")]['Valor'].sum()
+salida_proj = df_filtrado_fecha[df_filtrado_fecha[col_indicador].str.lower().str.contains("salida proyectada")]['Valor'].sum()
+wip = df_filtrado_fecha[df_filtrado_fecha[col_indicador].str.lower().str.contains("wip")]['Valor']
+delta_entrada = entrada_real - entrada_proj if entrada_proj else None
+delta_salida = salida_real - salida_proj if salida_proj else None
+eficiencia = salida_real / salida_proj * 100 if salida_proj > 0 else None
 
 delta_entrada_str = f"{delta_entrada:.1f}" if delta_entrada is not None else "-"
 delta_salida_str = f"{delta_salida:.1f}" if delta_salida is not None else "-"
