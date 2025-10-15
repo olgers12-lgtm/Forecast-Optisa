@@ -5,3 +5,4 @@ gspread
 gspread_dataframe
 oauth2client
 scikit-learn
+prophet
