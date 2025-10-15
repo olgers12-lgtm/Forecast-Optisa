@@ -9,7 +9,6 @@ import json
 import re
 from datetime import datetime, timedelta
 
-# --- CONFIGURACIÓN ---
 st.set_page_config(
     page_title="🚀 Dashboard Ejecutivo de Producción",
     layout="wide",
@@ -159,10 +158,11 @@ df_filtrado_fecha = df_melt[mask_fecha]
 st.markdown("<h2 style='color:#F6AE2D'>🧮 KPIs Optisa</h2>", unsafe_allow_html=True)
 kpi_cols = st.columns(4)
 
-# Acumulado hasta el último día seleccionado en el rango filtrado
 if not df_filtrado_fecha.empty:
     fecha_corte = df_filtrado_fecha["Fecha_dt"].max()
-    df_corte = df_filtrado_fecha[df_filtrado_fecha["Fecha_dt"] <= fecha_corte]
+    # Filtra SOLO dentro del rango visible (semana, mes, o rango) hasta el día de corte
+    rango = df_filtrado_fecha["Fecha_dt"] <= fecha_corte
+    df_corte = df_filtrado_fecha[rango]
     entrada_real = df_corte[df_corte[col_indicador].str.lower().str.contains("entrada real")]['Valor'].sum()
     entrada_proj = df_corte[df_corte[col_indicador].str.lower().str.contains("entrada-proyectada")]['Valor'].sum()
     salida_real = df_corte[df_corte[col_indicador].str.lower().str.contains("salida real")]['Valor'].sum()
