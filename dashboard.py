@@ -8,7 +8,6 @@ from oauth2client.service_account import ServiceAccountCredentials
 import json
 import re
 from datetime import datetime, timedelta
-
 st.set_page_config(
     page_title=" Dashboard de Producción",
     layout="wide",
@@ -331,170 +330,252 @@ with st.expander("🗂️ Mostrar/ocultar hoja original de Google Sheets"):
         st.info("Haz clic en el botón para mostrar la hoja completa sólo si la necesitas.")
 from prophet import Prophet
 import plotly.graph_objects as go
-
-st.markdown("<h2 style='color:#0D8ABC'>🤖 Predicción Inteligente (ML & IA)</h2>", unsafe_allow_html=True)
+# ---------- SECCIÓN ML / IA (SENIOR) ----------
+st.markdown("<hr>")
+st.markdown("<h2 style='color:#0D8ABC'>🤖 Predicción Inteligente (ML & IA) — senior</h2>", unsafe_allow_html=True)
 st.markdown(
     """
-    <div style='background:#f1f6f9;padding:10px 20px;border-radius:10px;margin-bottom:10px;'>
-        <b>¿Qué hace esta sección?</b><br>
-        <ul>
-        <li>Predice los próximos días de <b>entradas y salidas reales</b> usando un modelo Prophet avanzado, ajustado para plantas industriales.</li>
-        <li>Filtra outliers automáticamente y usa solo el histórico más reciente.</li>
-        <li>Incluye regresores de fin de semana y día de semana para captar patrones reales.</li>
-        <li>Visualización robusta: predicción ajustada y sin valores absurdos.</li>
-        </ul>
+    <div style='background:#f1f6f9;padding:10px 12px;border-radius:8px;margin-bottom:10px;'>
+      <b>Funciones:</b>
+      <ul>
+        <li>Predicción de Entradas/Salidas con Prophet (si está disponible) o fallback ML (GradientBoosting).</li>
+        <li>Filtrado automático de outliers (IQR), uso de histórico reciente (ajustable).</li>
+        <li>Regresores: fin de semana y día de semana; clipping de predicción para evitar picos irreales.</li>
+      </ul>
     </div>
-    """,
-    unsafe_allow_html=True
+    """, unsafe_allow_html=True
 )
 
-param_ml = st.selectbox(
-    "Selecciona el indicador a predecir:",
-    ["Entrada Real", "Salida Real"]
-)
-horizonte = st.slider("¿Cuántos días quieres predecir?", min_value=3, max_value=30, value=7)
+# ---------- ML: UI para usuario ----------
+col1, col2, col3 = st.columns([2,1,1])
+with col1:
+    param_ml = st.selectbox("Selecciona indicador a predecir:", ["Salida Real", "Entrada Real"])
+with col2:
+    horizon = st.slider("Horizonte (días)", min_value=3, max_value=30, value=7)
+with col3:
+    lookback_days = st.number_input("Histórico (días) para entrenar", min_value=30, max_value=365, value=90, step=30)
 
-if param_ml == "Entrada Real":
-    ind = "entrada real"
-elif param_ml == "Salida Real":
-    ind = "salida real"
+# Try prophet import
+use_prophet = False
+try:
+    from prophet import Prophet  # type: ignore
+    use_prophet = True
+except Exception:
+    use_prophet = False
+    st.info("Prophet no disponible: usaremos fallback ML (scikit-learn) si es necesario.")
+
+# Helper functions for ML
+def prepare_daily_series(df_melt, indicador_keyword, lookback_days):
+    # devuelve DataFrame con índice Fecha_dt y columnas ['y', 'y_clipped']
+    dfs = df_melt[df_melt[col_indicador].str.lower().str.contains(indicador_keyword)].copy()
+    dfs = dfs.dropna(subset=["Fecha_dt", "Valor"])
+    if dfs.empty:
+        return pd.DataFrame()
+    daily = dfs.groupby("Fecha_dt")["Valor"].sum().sort_index().to_frame(name="y")
+    max_date = daily.index.max()
+    min_date = max_date - pd.Timedelta(days=lookback_days)
+    daily = daily[daily.index >= min_date]
+    if daily.empty:
+        return pd.DataFrame()
+    # IQR clipping outliers
+    q1 = daily["y"].quantile(0.25)
+    q3 = daily["y"].quantile(0.75)
+    iqr = q3 - q1 if q3 >= q1 else 0
+    lower = q1 - 1.5 * iqr
+    upper = q3 + 1.5 * iqr
+    daily["y_clipped"] = daily["y"].clip(lower=lower, upper=upper)
+    return daily
+
+def build_features_from_series(series, lags=(1,2,3,7,14)):
+    df = series.to_frame().copy()
+    for lag in lags:
+        df[f"lag_{lag}"] = df["y_clipped"].shift(lag)
+    df["rolling_3"] = df["y_clipped"].rolling(3).mean()
+    df["rolling_7"] = df["y_clipped"].rolling(7).mean()
+    df["dow"] = df.index.dayofweek
+    df["is_weekend"] = (df["dow"] >= 5).astype(int)
+    df = df.dropna()
+    return df
+
+# Map selection
+ind_keyword = "salida real" if param_ml == "Salida Real" else "entrada real"
+ind_proj_keyword = "salida proyectada" if "salida" in ind_keyword else "entrada-proyectada"
+
+daily = prepare_daily_series(df_melt, ind_keyword, lookback_days)
+
+if daily.empty or daily["y_clipped"].sum() == 0:
+    st.warning("No hay suficientes datos limpios para entrenar/predicción. Ajusta filtros o selecciona otro indicador.")
 else:
-    ind = "entrada real"
+    # Try Prophet path first (but guard runtime errors)
+    if use_prophet:
+        try:
+            df_prophet = daily.reset_index().rename(columns={"Fecha_dt": "ds", "y_clipped": "y"}) if "Fecha_dt" in daily.reset_index().columns else daily.reset_index().rename(columns={daily.reset_index().columns[0]: "ds", "y_clipped": "y"})
+            # Ensure columns exist
+            if "ds" not in df_prophet.columns or "y" not in df_prophet.columns:
+                df_prophet = daily.reset_index().rename(columns={daily.reset_index().columns[0]: "ds", "y_clipped": "y"})
+            df_prophet["ds"] = pd.to_datetime(df_prophet["ds"])
+            df_prophet["is_weekend"] = df_prophet["ds"].dt.dayofweek >= 5
+            df_prophet["dow"] = df_prophet["ds"].dt.dayofweek
 
-df_hist = df_melt[df_melt[col_indicador].str.lower().str.contains(ind)].copy()
-df_hist = df_hist.dropna(subset=["Fecha_dt", "Valor"])
-df_hist = df_hist.sort_values("Fecha_dt")
+            m = Prophet(
+                yearly_seasonality=True,
+                weekly_seasonality=True,
+                daily_seasonality=False,
+                changepoint_prior_scale=0.01,
+                seasonality_prior_scale=5,
+            )
+            m.add_regressor("is_weekend")
+            m.add_regressor("dow")
+            m.fit(df_prophet)
 
-# --- Senior ML: Filtrado de outliers (IQR) y solo últimos 90 días ---
-if len(df_hist) > 10:
-    # Últimos 90 días
-    max_historico = df_hist["Fecha_dt"].max()
-    min_historico = max_historico - pd.Timedelta(days=90)
-    df_hist_recent = df_hist[df_hist["Fecha_dt"] >= min_historico].copy()
+            future = m.make_future_dataframe(periods=horizon, freq="D")
+            future["is_weekend"] = future["ds"].dt.dayofweek >= 5
+            future["dow"] = future["ds"].dt.dayofweek
 
-    # Filtrado outliers
-    q1 = df_hist_recent["Valor"].quantile(0.25)
-    q3 = df_hist_recent["Valor"].quantile(0.75)
-    iqr = q3 - q1
-    lower = q1 - 1.5*iqr
-    upper = q3 + 1.5*iqr
-    df_hist_recent["Valor_clipped"] = df_hist_recent["Valor"].clip(lower=lower, upper=upper)
+            forecast = m.predict(future)
 
-    # Data para Prophet
-    df_prophet = df_hist_recent.rename(columns={"Fecha_dt": "ds", "Valor_clipped": "y"}).loc[:, ["ds", "y"]]
-    df_prophet['is_weekend'] = df_prophet['ds'].dt.dayofweek >= 5
-    df_prophet['dow'] = df_prophet['ds'].dt.dayofweek
+            # Clip predictions to sensible bounds
+            hist_min = df_prophet["y"].min()
+            hist_max = df_prophet["y"].max()
+            lower_clip = max(hist_min, 0)
+            upper_clip = hist_max * 1.2 + 1
+            forecast["yhat"] = forecast["yhat"].clip(lower=lower_clip, upper=upper_clip)
+            forecast["yhat_lower"] = forecast["yhat_lower"].clip(lower=lower_clip, upper=upper_clip)
+            forecast["yhat_upper"] = forecast["yhat_upper"].clip(lower=lower_clip, upper=upper_clip)
 
-    # Prophet avanzado con regresores
-    m = Prophet(
-        yearly_seasonality=True,
-        weekly_seasonality=True,
-        daily_seasonality=False,
-        changepoint_prior_scale=0.01,
-        seasonality_prior_scale=10
-    )
-    m.add_regressor('is_weekend')
-    m.add_regressor('dow')
-    m.fit(df_prophet)
+            # Visualize
+            fig_ml = go.Figure()
+            fig_ml.add_trace(go.Scatter(x=df_prophet["ds"], y=df_prophet["y"], mode="lines+markers", name="Histórico filtrado", line=dict(color='#0D8ABC')))
+            fig_ml.add_trace(go.Scatter(x=forecast["ds"], y=forecast["yhat"], mode="lines", name="Predicción ML (Prophet)", line=dict(color='#F6AE2D', dash='dash')))
+            fig_ml.add_trace(go.Scatter(x=forecast["ds"], y=forecast["yhat_upper"], line=dict(color='rgba(246,174,45,0.2)'), showlegend=False))
+            fig_ml.add_trace(go.Scatter(x=forecast["ds"], y=forecast["yhat_lower"], fill='tonexty', fillcolor='rgba(246,174,45,0.18)', line=dict(color='rgba(246,174,45,0.2)'), showlegend=False))
 
-    future = m.make_future_dataframe(periods=horizonte, freq="D")
-    future['is_weekend'] = future['ds'].dt.dayofweek >= 5
-    future['dow'] = future['ds'].dt.dayofweek
+            # Add area projection if exists
+            df_proj = df_melt[df_melt[col_indicador].str.lower().str.contains(ind_proj_keyword)].copy()
+            if not df_proj.empty:
+                proj_daily = df_proj.groupby("Fecha_dt")["Valor"].sum().sort_index()
+                fig_ml.add_trace(go.Scatter(x=proj_daily.index, y=proj_daily.values, mode="lines+markers", name="Proyección Área", line=dict(color="#61C0BF", dash="dot")))
 
-    forecast = m.predict(future)
+            fig_ml.update_layout(title=f"Predicción Prophet: {param_ml}", xaxis_title="Fecha", yaxis_title="Valor", template="plotly_white")
+            st.plotly_chart(fig_ml, use_container_width=True)
 
-    # Clipping en predicción para evitar negativos o picos absurdos
-    min_real = max(df_prophet["y"].min(), 0)
-    max_real = df_prophet["y"].max() * 1.10
-    forecast['yhat'] = forecast['yhat'].clip(lower=min_real, upper=max_real)
-    forecast['yhat_upper'] = forecast['yhat_upper'].clip(lower=min_real, upper=max_real)
-    forecast['yhat_lower'] = forecast['yhat_lower'].clip(lower=min_real, upper=max_real)
+            # Quick sanity check: if max prediction is much higher than history -> warn and give tips
+            max_pred = forecast["yhat"].max()
+            if max_pred > hist_max * 1.1:
+                st.warning("La predicción muestra picos por encima del histórico. Considera ajustar lookback o agregar regresores (paros/mantenimientos).")
 
-    # Visualización
-    fig_ml = go.Figure()
-    # Histórico (original)
-    fig_ml.add_trace(go.Scatter(
-        x=df_hist_recent['Fecha_dt'],
-        y=df_hist_recent['Valor'],
-        mode='lines+markers',
-        name=f'Histórico {param_ml}',
-        line=dict(color='#0D8ABC', width=2)
-    ))
-    # Histórico (sin outliers)
-    fig_ml.add_trace(go.Scatter(
-        x=df_prophet['ds'],
-        y=df_prophet['y'],
-        mode='lines',
-        name=f'Histórico filtrado',
-        line=dict(color='#5BC0EB', dash='dot', width=1)
-    ))
-    # Predicción ML
-    fig_ml.add_trace(go.Scatter(
-        x=forecast['ds'],
-        y=forecast['yhat'],
-        mode='lines',
-        name='Predicción ML',
-        line=dict(color='#F6AE2D', dash='dash', width=3)
-    ))
-    # Banda de confianza
-    fig_ml.add_trace(go.Scatter(
-        x=forecast['ds'],
-        y=forecast['yhat_upper'],
-        line=dict(color='rgba(246,174,45,0.2)'),
-        name='Confianza Superior',
-        showlegend=False
-    ))
-    fig_ml.add_trace(go.Scatter(
-        x=forecast['ds'],
-        y=forecast['yhat_lower'],
-        fill='tonexty',
-        fillcolor='rgba(246,174,45,0.18)',
-        line=dict(color='rgba(246,174,45,0.2)'),
-        name='Confianza Inferior',
-        showlegend=False
-    ))
+        except Exception as e:
+            st.error("Prophet falló en tiempo de ejecución — usando fallback ML. Detalle: " + str(e))
+            use_prophet = False  # caemos al fallback
 
-    # Proyección original del área (si existe)
-    ind_proj = "entrada-proyectada" if ind == "entrada real" else "salida proyectada"
-    df_proj = df_melt[df_melt[col_indicador].str.lower().str.contains(ind_proj)].copy()
-    if not df_proj.empty:
-        df_proj = df_proj.set_index("Fecha_dt").sort_index()
-        fig_ml.add_trace(go.Scatter(
-            x=df_proj.index,
-            y=df_proj["Valor"],
-            mode='lines+markers',
-            name=f'Proyección Área',
-            line=dict(color='#61C0BF', dash='dot', width=2)
-        ))
+    # FALLBACK ML (scikit-learn)
+    if not use_prophet:
+        try:
+            from sklearn.ensemble import GradientBoostingRegressor
+            from sklearn.model_selection import TimeSeriesSplit
+            from sklearn.metrics import mean_absolute_error
+        except Exception as e:
+            st.error("No se pudo importar scikit-learn. Instálalo (pip install scikit-learn) o arregla Prophet. Error: " + str(e))
+            st.stop()
 
-    fig_ml.update_layout(
-        xaxis_title="Fecha",
-        yaxis_title="Valor",
-        hovermode="x unified",
-        template="plotly_white",
-        margin=dict(l=30, r=30, t=40, b=40),
-        font=dict(family="Segoe UI,Roboto,Arial", size=15),
-        showlegend=True
-    )
-    st.plotly_chart(fig_ml, use_container_width=True)
+        series = daily["y_clipped"].copy()
+        df_feats = build_features := None
+        try:
+            df_feats = build_features_from_series(series, lags=(1,2,3,7,14))
+        except Exception as e:
+            st.error("Error creando features: " + str(e))
+            st.stop()
 
-    # Advertencia si el modelo todavía predice valores muy altos
-    max_pred = forecast['yhat'].max()
-    if max_pred > max_real * 1.05:
-        st.warning("⚠️ La predicción sigue mostrando valores elevados. Revisa si hay cambios estructurales recientes, más outliers, o si debes agregar más regresores (paros, mantenimientos, turnos, etc).")
+        if df_feats.shape[0] < 10:
+            st.warning("Pocas filas tras crear features. Aumenta lookback o mejora datos.")
+        else:
+            X = df_feats.drop(columns=["y", "y_clipped"], errors='ignore')
+            # Determine y target
+            if "y" in df_feats.columns:
+                y = df_feats["y"]
+            else:
+                y = df_feats["y_clipped"]
 
-    st.success("Predicción avanzada generada con robustez industrial. Si ves resultados poco realistas, revisa tu histórico y considera agregar más variables explicativas.")
+            # TimeSeries CV
+            tscv = TimeSeriesSplit(n_splits=3)
+            val_scores = []
+            residuals = []
+            for train_idx, val_idx in tscv.split(X):
+                X_train, X_val = X.iloc[train_idx], X.iloc[val_idx]
+                y_train, y_val = y.iloc[train_idx], y.iloc[val_idx]
+                model_cv = GradientBoostingRegressor(n_estimators=200, learning_rate=0.1, max_depth=3)
+                model_cv.fit(X_train, y_train)
+                preds = model_cv.predict(X_val)
+                val_scores.append(mean_absolute_error(y_val, preds))
+                residuals.extend(list(y_val - preds))
 
-else:
-    st.warning("No hay suficiente histórico para entrenar un modelo ML robusto. Asegúrate de tener al menos 10 datos históricos para el indicador seleccionado.")
+            # Train final
+            model = GradientBoostingRegressor(n_estimators=300, learning_rate=0.05, max_depth=3)
+            model.fit(X, y)
 
-st.info(
+            # Iterative forecast
+            last_known = series.copy()
+            preds_dates = []
+            preds_values = []
+            for i in range(horizon):
+                next_date = last_known.index.max() + pd.Timedelta(days=1)
+                # build features
+                feats = {}
+                for lag in (1,2,3,7,14):
+                    idx = next_date - pd.Timedelta(days=lag)
+                    feats[f"lag_{lag}"] = last_known.get(idx, last_known.iloc[-1])
+                feats["rolling_3"] = last_known[-3:].mean() if len(last_known)>=3 else last_known.mean()
+                feats["rolling_7"] = last_known[-7:].mean() if len(last_known)>=7 else last_known.mean()
+                feats["dow"] = next_date.dayofweek
+                feats["is_weekend"] = int(feats["dow"] >= 5)
+                feat_df = pd.DataFrame([feats])
+                feat_df = feat_df.reindex(columns=X.columns, fill_value=0)
+                pred = model.predict(feat_df)[0]
+                # clip to sensible bounds
+                hist_min = series.min()
+                hist_max = series.max()
+                pred = float(np.clip(pred, max(hist_min, 0), hist_max * 1.2 + 1))
+                preds_dates.append(next_date)
+                preds_values.append(pred)
+                last_known.loc[next_date] = pred
+
+            resid_std = np.std(residuals) if residuals else np.std(y - model.predict(X))
+            ci_upper = np.array(preds_values) + 1.96 * resid_std
+            ci_lower = np.array(preds_values) - 1.96 * resid_std
+            ci_lower = np.clip(ci_lower, 0, None)
+
+            # Visualize fallback results
+            fig_fb = go.Figure()
+            fig_fb.add_trace(go.Scatter(x=series.index, y=series.values, mode="lines+markers", name="Histórico filtrado", line=dict(color="#0D8ABC")))
+            fig_fb.add_trace(go.Scatter(x=df_feats.index, y=df_feats["y_clipped"].values, mode="lines", name="Histórico usado (features)", line=dict(color="#5BC0EB", dash="dot")))
+            fig_fb.add_trace(go.Scatter(x=preds_dates, y=preds_values, mode="lines+markers", name="Predicción ML (GBM fallback)", line=dict(color="#F6AE2D", dash="dash")))
+            fig_fb.add_trace(go.Scatter(x=preds_dates, y=ci_upper, line=dict(color="rgba(246,174,45,0.2)"), showlegend=False))
+            fig_fb.add_trace(go.Scatter(x=preds_dates, y=ci_lower, fill='tonexty', fillcolor='rgba(246,174,45,0.18)', line=dict(color='rgba(246,174,45,0.2)'), showlegend=False))
+
+            df_proj = df_melt[df_melt[col_indicador].str.lower().str.contains(ind_proj_keyword)].copy()
+            if not df_proj.empty:
+                proj_daily = df_proj.groupby("Fecha_dt")["Valor"].sum().sort_index()
+                fig_fb.add_trace(go.Scatter(x=proj_daily.index, y=proj_daily.values, mode="lines+markers", name="Proyección Área", line=dict(color="#61C0BF", dash="dot")))
+
+            fig_fb.update_layout(title=f"Predicción ML fallback: {param_ml}", xaxis_title="Fecha", yaxis_title="Valor", template="plotly_white")
+            st.plotly_chart(fig_fb, use_container_width=True)
+            st.success("Predicción generada con fallback ML (GradientBoosting).")
+            st.write(f"MAE CV estimado: {np.mean(val_scores):.1f}  —  Residual std approx: {resid_std:.1f}")
+
+# ---------- EXPANDER: Mostrar hoja original ----------
+with st.expander("🗂️ Mostrar/ocultar hoja original de Google Sheets"):
+    if st.button("Mostrar hoja original"):
+        st.dataframe(df, use_container_width=True)
+    else:
+        st.info("Haz clic en el botón para mostrar la hoja completa sólo si la necesitas.")
+
+# ---------- FOOTER: Recomendaciones ----------
+st.markdown("---")
+st.markdown(
     """
-    <b>Tips de ingeniería senior:</b><br>
-    - Se filtran outliers automáticamente para evitar distorsión.<br>
-    - El modelo es menos sensible a cambios bruscos y aprende patrones semanales.<br>
-    - Puedes integrar regresores adicionales (paros, mantenimientos, eventos externos) para mayor realismo.<br>
-    - Para máxima confiabilidad, integra pipelines automáticos de limpieza y validación.<br>
-    """,
-    icon="🧠"
-)
+    Recomendaciones de ingeniería senior:
+    - Para producción, entrena modelos offline y carga modelos serializados (joblib) en la app para evitar re-entrenar en cada reload.
+    - Añade regresores (paros, mantenimientos, turnos) para mejorar la precisión.
+    - Implementa validación y monitoreo de drift (alertas si el error aumenta).
+    - Si quieres, te preparo el pipeline de entrenamiento + CI/CD y PR para integrar el modelo en el repo.
+    """)
