@@ -330,22 +330,6 @@ with st.expander("🗂️ Mostrar/ocultar hoja original de Google Sheets"):
         st.info("Haz clic en el botón para mostrar la hoja completa sólo si la necesitas.")
 from prophet import Prophet
 import plotly.graph_objects as go
-# ---------- SECCIÓN ML / IA (SENIOR) ----------
-st.markdown("<hr>")
-st.markdown("<h2 style='color:#0D8ABC'>🤖 Predicción Inteligente (ML & IA) — senior</h2>", unsafe_allow_html=True)
-st.markdown(
-    """
-    <div style='background:#f1f6f9;padding:10px 12px;border-radius:8px;margin-bottom:10px;'>
-      <b>Funciones:</b>
-      <ul>
-        <li>Predicción de Entradas/Salidas con Prophet (si está disponible) o fallback ML (GradientBoosting).</li>
-        <li>Filtrado automático de outliers (IQR), uso de histórico reciente (ajustable).</li>
-        <li>Regresores: fin de semana y día de semana; clipping de predicción para evitar picos irreales.</li>
-      </ul>
-    </div>
-    """, unsafe_allow_html=True
-)
-
 # ---------- ML: UI para usuario ----------
 col1, col2, col3 = st.columns([2,1,1])
 with col1:
@@ -468,7 +452,7 @@ else:
             st.error("Prophet falló en tiempo de ejecución — usando fallback ML. Detalle: " + str(e))
             use_prophet = False  # caemos al fallback
 
-   # FALLBACK ML (scikit-learn)
+    # FALLBACK ML (scikit-learn)
     if not use_prophet:
         try:
             from sklearn.ensemble import GradientBoostingRegressor
@@ -562,12 +546,13 @@ else:
             st.success("Predicción generada con fallback ML (GradientBoosting).")
             st.write(f"MAE CV estimado: {np.mean(val_scores):.1f}  —  Residual std approx: {resid_std:.1f}")
 
-# ---------- EXPANDER: Mostrar hoja original ----------
+# ---------- EXPANDER: Mostrar hoja original (CHECKBOX con key única para evitar duplicados) ----------
 with st.expander("🗂️ Mostrar/ocultar hoja original de Google Sheets"):
-    if st.button("Mostrar hoja original"):
+    # Uso checkbox en lugar de button para evitar StreamlitDuplicateElementId
+    if st.checkbox("Mostrar hoja original", key="chk_show_sheet_main"):
         st.dataframe(df, use_container_width=True)
     else:
-        st.info("Haz clic en el botón para mostrar la hoja completa sólo si la necesitas.")
+        st.info("Haz clic en 'Mostrar hoja original' para ver la hoja completa sólo si la necesitas.")
 
 # ---------- FOOTER: Recomendaciones ----------
 st.markdown("---")
