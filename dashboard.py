@@ -468,7 +468,7 @@ else:
             st.error("Prophet falló en tiempo de ejecución — usando fallback ML. Detalle: " + str(e))
             use_prophet = False  # caemos al fallback
 
-    # FALLBACK ML (scikit-learn)
+   # FALLBACK ML (scikit-learn)
     if not use_prophet:
         try:
             from sklearn.ensemble import GradientBoostingRegressor
@@ -479,7 +479,7 @@ else:
             st.stop()
 
         series = daily["y_clipped"].copy()
-        df_feats = build_features := None
+        df_feats = None
         try:
             df_feats = build_features_from_series(series, lags=(1,2,3,7,14))
         except Exception as e:
