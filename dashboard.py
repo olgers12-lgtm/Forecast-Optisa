@@ -1,4 +1,4 @@
-i"""
+"""
 Dashboard de Producción + ML (completo)
 
 Características incluidas:
