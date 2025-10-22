@@ -1,14 +1,13 @@
 """
-Dashboard de Producción + ML (privado)
+Dashboard de Producción — versión corregida
 
-Cambios aplicados según tu pedido:
-- He eliminado la visualización del panel "Salida Proyectada (Resto año)" para que no aparezca en el dashboard.
-- La sección de ML ahora está protegida: solo se muestra si se introduce la clave correcta en el sidebar.
-  - La clave se lee desde st.secrets["ML_PASSWORD"]. Añádela en Streamlit Cloud o en tu archivo .streamlit/secrets.toml:
-      ML_PASSWORD = "tu_clave_segura_aqui"
-  - También puedes cambiar la clave desde allí cuando quieras.
-- Las selecciones y filtros se mantienen en el sidebar como tenías antes.
-- Si no hay clave configurada en secrets, la sección ML permanece oculta (y se muestra una nota solo para el dueño).
+Cambios principales aplicados en esta versión:
+- Corregido AttributeError: ya no se accede a st.sidebar.session_state; se usa st.session_state correctamente.
+- Los selectores de fecha (Día/Semana/Mes/Rango) están arriba en el sidebar, antes del bloque ML.
+- La sección ML está oculta por defecto y solo se muestra si el usuario introduce la clave correcta (st.secrets["ML_PASSWORD"]).
+- Eliminado por completo el panel "Resto del año" (no se renderiza).
+- Evité colisiones de widgets (keys únicas) y dejé el resto del dashboard funcional como antes.
+- Mantengo el pipeline ML (Prophet si está disponible; fallback con GradientBoosting).
 """
 
 import streamlit as st
@@ -115,7 +114,7 @@ def agregar_ano(col):
             return None
     return None
 
-# ---------- Cargar y preparar datos ----------
+# ---------- Cargar datos ----------
 df = cargar_datos(SHEET_ID, SHEET_NAME)
 col_indicador = next((c for c in df.columns if "indicador" in c.lower()), None)
 if not col_indicador:
@@ -123,10 +122,14 @@ if not col_indicador:
     st.stop()
 df = df[df[col_indicador].notnull() & (df[col_indicador] != '')]
 
-# ---------- SIDEBAR: controles (izquierda) ----------
+# ---------- SIDEBAR: controles (ordenados) ----------
 with st.sidebar:
     st.markdown("<h2 style='color:#0D8ABC'>📅 Controles / Filtros</h2>", unsafe_allow_html=True)
+
+    # include future columns
     include_future = st.checkbox("Incluir fechas proyectadas/futuras (columnas nuevas)", value=True, key="chk_include_future")
+
+    # Indicadores selection (moved to sidebar)
     indicadores = df[col_indicador].unique().tolist()
     indicador_sel = st.multiselect(
         "Selecciona indicadores:",
@@ -134,6 +137,7 @@ with st.sidebar:
         default=[i for i in indicadores if "real" in i.lower() or "proyect" in i.lower() or "wip" in i.lower()],
         key="sidebar_indicadores"
     )
+
     st.markdown("---")
     st.markdown("<b>Filtro de fechas</b>", unsafe_allow_html=True)
     filtro_tipo = st.radio(
@@ -142,30 +146,6 @@ with st.sidebar:
         horizontal=False,
         key="sidebar_filtro_tipo"
     )
-    st.markdown("---")
-    st.markdown("<b>ML / IA (privado)</b>", unsafe_allow_html=True)
-    # campo para desbloquear la sección ML - solo se muestra en sidebar
-    ml_password_input = st.text_input("Clave ML (solo admins)", type="password", key="ml_pass_input")
-    # opción para cerrar sesión ML
-    if "ml_unlocked" not in st.session_state:
-        st.session_state["ml_unlocked"] = False
-
-    # comprobar secreto configurado en Streamlit (recomendado)
-    secret_ml = st.secrets.get("ML_PASSWORD") if hasattr(st, "secrets") else None
-    if ml_password_input:
-        if secret_ml and ml_password_input == secret_ml:
-            st.session_state["ml_unlocked"] = True
-            st.success("Sección ML desbloqueada")
-        elif not secret_ml:
-            # Si no hay secreto, permitir desbloquear localmente (útil en local dev)
-            # Advertencia: esto no es seguro en producción; se recomienda usar st.secrets
-            st.warning("No se encontró ML_PASSWORD en st.secrets. Añade la clave en secrets para protección real. Actualmente el desbloqueo local está deshabilitado.", icon="⚠️")
-        else:
-            st.error("Clave ML incorrecta", icon="❌")
-    if st.session_state["ml_unlocked"]:
-        if st.button("Cerrar sesión ML", key="btn_ml_logout"):
-            st.session_state["ml_unlocked"] = False
-            st.success("Sesión ML cerrada")
 
 # ---------- Construir lista de columnas válidas (fechas) ----------
 fechas_cols = [c for c in df.columns if c != col_indicador]
@@ -198,8 +178,7 @@ df_melt["Fecha_dt"] = pd.to_datetime(df_melt["Fecha"].apply(agregar_ano), format
 df_melt["Valor"] = pd.to_numeric(df_melt["Valor"], errors="coerce")
 df_melt = df_melt.dropna(subset=["Fecha_dt"])
 
-# ---------- Ahora los selects de fecha según filtro (sidebar) ----------
-# Se crean después de tener df_melt preparado
+# ---------- SIDEBAR: create date selectors (now that df_melt exists) ----------
 with st.sidebar:
     if filtro_tipo == "🗓️ Día":
         fechas_disponibles = sorted(df_melt["Fecha_dt"].dt.date.unique()) if not df_melt.empty else []
@@ -260,7 +239,35 @@ with st.sidebar:
             key="sidebar_fecha_rango"
         )
 
-# ---------- Construir mask_fecha ----------
+    # --- ML unlock block moved AFTER date selectors so selectors are higher in sidebar
+    st.markdown("---")
+    st.markdown("<b>ML / IA (privado)</b>", unsafe_allow_html=True)
+    # Initialize ml_unlocked in session state if missing
+    if "ml_unlocked" not in st.session_state:
+        st.session_state["ml_unlocked"] = False
+
+    ml_password_input = st.text_input("Clave ML (solo admins)", type="password", key="ml_pass_input")
+    secret_ml = st.secrets.get("ML_PASSWORD") if hasattr(st, "secrets") else None
+    if ml_password_input:
+        if secret_ml and ml_password_input == secret_ml:
+            st.session_state["ml_unlocked"] = True
+            st.success("Sección ML desbloqueada")
+        elif not secret_ml:
+            st.warning("ML_PASSWORD no encontrado en st.secrets. Añade la clave en secrets para protección real.", icon="⚠️")
+        else:
+            st.error("Clave ML incorrecta", icon="❌")
+
+    # ML controls (visible only if unlocked) — we still render controls but they are inert until unlocked
+    ml_param = st.selectbox("Indicador ML:", ["Salida Real", "Entrada Real"], key="ml_param_sidebar")
+    ml_horizon = st.slider("Horizonte ML (días)", min_value=3, max_value=30, value=7, key="ml_horizon_sidebar")
+    ml_lookback = st.number_input("Histórico ML (días)", min_value=30, max_value=365, value=90, step=30, key="ml_lookback_sidebar")
+
+    if st.session_state["ml_unlocked"]:
+        if st.button("Cerrar sesión ML", key="btn_ml_logout"):
+            st.session_state["ml_unlocked"] = False
+            st.success("Sesión ML cerrada")
+
+# ---------- Construir mask_fecha según selects ----------
 if filtro_tipo == "🗓️ Día":
     if isinstance(fechas_sel, list):
         mask_fecha = df_melt["Fecha_dt"].dt.date.isin(fechas_sel)
@@ -268,14 +275,14 @@ if filtro_tipo == "🗓️ Día":
         mask_fecha = df_melt["Fecha_dt"].dt.date == fechas_sel
     agrupador = "dia"
 elif filtro_tipo == "📆 Semana":
-    if semanas_unicas:
+    if 'semanas_unicas' in locals() and semanas_unicas:
         year_sel, week_sel = semanas_unicas[semana_sel_idx]
         mask_fecha = (df_melt["AñoISO"] == year_sel) & (df_melt["SemanaISO"] == week_sel)
     else:
         mask_fecha = pd.Series([False]*len(df_melt))
     agrupador = "semana"
 elif filtro_tipo == "🗓️ Mes":
-    if mes_sel:
+    if 'mes_sel' in locals() and mes_sel:
         mask_fecha = df_melt["Fecha_dt"].dt.strftime("%B %Y") == mes_sel
     else:
         mask_fecha = pd.Series([False]*len(df_melt))
@@ -373,7 +380,7 @@ if not wip_hoy.empty:
             f"</div>", unsafe_allow_html=True
         )
 
-# --- Mostramos Entradas/Salidas Proyectadas ACUMULADAS abajo ---
+# --- Entradas/Salidas Proyectadas ACUMULADAS abajo (siempre visible) ---
 st.markdown("""
 <div style='margin-bottom:20px;padding:12px 16px;background:#f7f7f7;border-radius:12px;box-shadow:0 2px 8px #eee;display:flex;gap:36px;justify-content:center;'>
     <div style='font-size:20px;color:#0D8ABC;'><strong>Entrada Proyectada:</strong> {}</div>
@@ -385,10 +392,6 @@ st.markdown("""
     int(salida_proj) if pd.notnull(salida_proj) else "-",
     f"{(salida_proj/entrada_proj*100):.1f}" if entrada_proj and pd.notnull(salida_proj) and entrada_proj>0 else "-"
 ), unsafe_allow_html=True)
-
-# ---------- Nota: "Resto del año" eliminado (no se renderiza) ----------
-# He eliminado la sección visual de "Resto del año" solicitada.
-# (Si quieres mantener el cálculo por detrás para otros usos, lo puedo dejar; ahora no se muestra.)
 
 # ---------- GRÁFICOS HISTÓRICOS ----------
 st.markdown("<h2 style='color:#3EC0ED'>📊 Evolución de Indicadores</h2>", unsafe_allow_html=True)
@@ -462,16 +465,17 @@ if not df_filtrado_fecha.empty:
         key="download_filtered_csv"
     )
 
-# ---------- SECCIÓN ML / IA (solo visible si ml_unlocked True) ----------
+# ---------- SECCIÓN ML (privada) ----------
+# Read ML controls from session_state (they were created in the sidebar)
+param_ml = st.session_state.get("ml_param_sidebar", "Salida Real")
+horizon = st.session_state.get("ml_horizon_sidebar", 7)
+lookback_days = st.session_state.get("ml_lookback_sidebar", 90)
+
 if st.session_state.get("ml_unlocked", False):
     st.markdown("<hr>")
     st.markdown("<h2 style='color:#0D8ABC'>🤖 Predicción Inteligente (ML & IA) - Privado</h2>", unsafe_allow_html=True)
-    # Los controles ML ya están en el sidebar; reutilizamos sus valores (si quieres otro comportamiento, lo adaptamos)
-    param_ml = st.sidebar.session_state.get("ml_param_sidebar", "Salida Real")
-    horizon = st.sidebar.session_state.get("ml_horizon_sidebar", 7)
-    lookback_days = st.sidebar.session_state.get("ml_lookback_sidebar", 90)
 
-    # (Copia el pipeline ML que ya tenías: preparo la serie, intento Prophet, fallback GBM)
+    # Reuse ML pipeline (Prophet if available, else fallback)
     def prepare_daily_series(df_melt_local, indicador_keyword, lookback_days_local):
         dfs = df_melt_local[df_melt_local[col_indicador].str.lower().str.contains(indicador_keyword)].copy()
         dfs = dfs.dropna(subset=["Fecha_dt", "Valor"])
@@ -510,13 +514,13 @@ if st.session_state.get("ml_unlocked", False):
     if daily_ml.empty or daily_ml["y_clipped"].sum() == 0:
         st.warning("No hay suficientes datos limpios para entrenar/predicción ML. Ajusta filtros o selecciona otro indicador.")
     else:
-        # Intentar Prophet, si disponible
         use_prophet = False
         try:
             from prophet import Prophet  # type: ignore
             use_prophet = True
         except Exception:
             use_prophet = False
+            st.info("Prophet no disponible, usando fallback ML.", icon="ℹ️")
 
         if use_prophet:
             try:
@@ -657,7 +661,6 @@ st.markdown(
     """
     Recomendaciones:
     - Añade ML_PASSWORD en Streamlit secrets para proteger la sección ML (recomendado).
-    - Si quieres que otra persona vea ML, crea una clave compartida y gestiona desde secrets.
-    - Puedo habilitar acceso por GitHub login (OAuth) si quieres control más fino; dime y lo integro.
+    - Si quieres acceso por GitHub login/SSO para ML solo para un usuario, puedo integrarlo.
     """
 )
