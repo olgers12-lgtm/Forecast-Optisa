@@ -1,11 +1,10 @@
 """
-Dashboard de Producción — versión limpia y visualmente mejorada
+Dashboard de Producción — versión con lista de indicadores visible y scrollable
 
-- Se eliminaron todas las secciones ML/IA.
-- Sidebar rediseñado con "cards" (CSS ligero), botones Select All / Clear, multiselect con scroll.
-- Parsing robusto de encabezados (agregar_ano) para detectar columnas fecha/futuras.
-- Filtros Día / Semana / Mes / Rango y selectores creados dinámicamente.
-- KPIs, gráficos históricos, heatmap WIP y descarga CSV incluidos.
+Cambios importantes:
+- Reemplacé el multiselect por una caja scrollable con checkboxes en grid (mejor visual).
+- Botones 'Seleccionar todo' y 'Borrar selección' ajustan los checkboxes (se guarda en st.session_state).
+- Mantengo parsing de fechas, filtros y visualizaciones.
 """
 
 import streamlit as st
@@ -18,6 +17,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 import json
 import re
 from datetime import datetime, timedelta
+from math import ceil
 
 # ---------- CONFIG ----------
 st.set_page_config(
@@ -52,24 +52,15 @@ def cargar_datos(sheet_id, sheet_name):
 
 # ---------- UTIL: parsing robusto de encabezados a fecha ----------
 def agregar_ano(col):
-    """
-    Intenta convertir el texto de la cabecera de columna a 'YYYY-MM-DD'.
-    Maneja formatos ISO, 'día mes [año]', abreviaturas español/inglés, etc.
-    Devuelve string 'YYYY-MM-DD' o None si no pudo parsear.
-    """
     col_orig = str(col).strip()
     if not col_orig:
         return None
-
-    # 1) Intentar parse directo con pandas
     try:
         dt = pd.to_datetime(col_orig, dayfirst=True, yearfirst=False, errors="coerce")
         if not pd.isna(dt):
             return dt.strftime("%Y-%m-%d")
     except Exception:
         pass
-
-    # 2) Mapa de meses (español/inglés abrevs y completos)
     mes_map = {
         "ene":"01","ene.":"01","enero":"01",
         "feb":"02","feb.":"02","febrero":"02",
@@ -84,39 +75,33 @@ def agregar_ano(col):
         "nov":"11","nov.":"11","noviembre":"11",
         "dic":"12","dic.":"12","diciembre":"12","dec":"12","dec.":"12"
     }
-
-    # 3) Regex: día + mes (posible año opcional)
     m = re.match(r"^\s*(\d{1,2})\s*[-/\\\s]?\s*([A-Za-zñÑ\.]+)(?:[-/\\\s]?(\d{2,4}))?\s*$", col_orig)
     if m:
         dia = int(m.group(1))
         mes_txt = m.group(2).lower().strip().replace(".", "")
         año_txt = m.group(3)
         mes_key = mes_txt[:4] if len(mes_txt) >= 3 else mes_txt
-        # buscar clave completa en mes_map
         mes_num = None
         if mes_txt in mes_map:
             mes_num = mes_map[mes_txt]
         else:
-            for k in mes_map.keys():
+            for k, v in mes_map.items():
                 if k.startswith(mes_key):
-                    mes_num = mes_map[k]
+                    mes_num = v
                     break
         if not mes_num:
             return None
-        # determinar año
         if año_txt:
             año = int(año_txt)
             if año < 100:
                 año += 2000
         else:
-            año = datetime.today().year  # por defecto año actual
+            año = datetime.today().year
         try:
             dt = pd.Timestamp(year=año, month=int(mes_num), day=dia)
             return dt.strftime("%Y-%m-%d")
         except Exception:
             return None
-
-    # 4) Regex ISO explícito y otros formatos numéricos
     m2 = re.match(r"^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$", col_orig)
     if m2:
         y, mo, d = int(m2.group(1)), int(m2.group(2)), int(m2.group(3))
@@ -125,8 +110,6 @@ def agregar_ano(col):
             return dt.strftime("%Y-%m-%d")
         except Exception:
             return None
-
-    # No se pudo parsear
     return None
 
 # ---------- Cargar y preparar datos ----------
@@ -137,96 +120,84 @@ if not col_indicador:
     st.stop()
 df = df[df[col_indicador].notnull() & (df[col_indicador] != '')]
 
-# ---------- SIDEBAR: styled improved ----------
-# Inyectar CSS ligero para mejorar visual
+# ---------- SIDEBAR: estilizado y lista de checkboxes scrollable ----------
+# CSS ligero para la caja scrollable (mejor control visual)
 st.markdown(
     """
     <style>
-    /* Card look for sidebar groups */
-    .sidebar-card {
-        background: #ffffff;
-        border-radius: 10px;
-        padding: 12px 14px;
-        margin-bottom: 12px;
-        box-shadow: 0 2px 6px rgba(19, 38, 63, 0.04);
-        border: 1px solid rgba(30, 41, 59, 0.04);
-    }
-    .sidebar-card h4 {
-        margin: 0 0 8px 0;
-        font-size: 14px;
-        color: #0D8ABC;
-    }
-    .sidebar-smallnote {
-        color: #6b7280; font-size:12px; margin-top:8px;
-    }
-    /* Force multiselect box to have max height and internal scroll */
-    .stMultiSelect > div[role="listbox"] {
-        max-height: 170px !important;
-        overflow: auto !important;
-    }
-    /* Buttons small style */
-    .side-btns .stButton>button {
-        padding: 6px 10px;
-        border-radius: 8px;
-        background: #ffffff;
-        border: 1px solid rgba(30,41,59,0.08);
-    }
-    .sidebar-compact { gap: 8px; display:flex; flex-direction:column; }
+    .sidebar-card { background:#fff; border-radius:10px; padding:12px; margin-bottom:12px; box-shadow:0 2px 6px rgba(19,38,63,0.04); }
+    .sidebar-small { color:#6b7280; font-size:12px; margin-top:6px; }
+    .checkbox-grid { display:flex; flex-wrap:wrap; gap:6px; }
+    .checkbox-item { width:47%; } /* two columns */
+    .scroll-box { max-height:220px; overflow:auto; padding-right:6px; }
+    .side-btns .stButton>button { padding:6px 10px; border-radius:8px; }
     </style>
-    """,
-    unsafe_allow_html=True,
+    """, unsafe_allow_html=True
 )
 
 with st.sidebar:
-    st.markdown("<div class='sidebar-card sidebar-compact'>", unsafe_allow_html=True)
-    st.markdown("<h4>📅 Controles / Filtros</h4>", unsafe_allow_html=True)
-
-    # compact checkbox + label inline
+    st.markdown("<div class='sidebar-card'>", unsafe_allow_html=True)
+    st.markdown("## 📅 Controles / Filtros")
     col_a, col_b = st.columns([0.12, 0.88])
     with col_a:
         include_future = st.checkbox("", value=True, key="chk_include_future")
     with col_b:
-        st.markdown("<div style='font-size:13px;margin-top:4px;'>Incluir fechas<br><span style='color:#6b7280;font-size:11px;'>proyectadas / futuras</span></div>", unsafe_allow_html=True)
-
+        st.markdown("<div style='margin-top:6px;font-size:13px;'>Incluir fechas<br><span style='color:#6b7280;font-size:11px;'>proyectadas / futuras</span></div>", unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # INDICADORES card
+    # Indicadores card (checklist grid)
     st.markdown("<div class='sidebar-card'>", unsafe_allow_html=True)
-    st.markdown("<h4>🧾 Indicadores</h4>", unsafe_allow_html=True)
+    st.markdown("### 🧾 Indicadores")
 
-    indicadores = df[col_indicador].unique().tolist()
+    indicadores = list(df[col_indicador].unique())
+    # Initialize checkbox states if not present
+    for i, ind in enumerate(indicadores):
+        key = f"ind_{i}"
+        if key not in st.session_state:
+            st.session_state[key] = True if ("real" in ind.lower() or "proyect" in ind.lower() or "wip" in ind.lower()) else False
 
-    # Quick action buttons
-    st.markdown("<div class='side-btns'>", unsafe_allow_html=True)
-    col1, col2 = st.columns([1,1])
-    if col1.button("Seleccionar todo", key="btn_select_all_ind"):
-        st.session_state["sidebar_indicadores"] = indicadores
-    if col2.button("Borrar selección", key="btn_clear_ind"):
-        st.session_state["sidebar_indicadores"] = []
+    # Buttons to select/clear all (set session_state keys)
+    st.markdown("<div class='side-btns' style='display:flex;gap:8px;margin-bottom:8px;'>", unsafe_allow_html=True)
+    c1, c2 = st.columns([1,1])
+    if c1.button("Seleccionar todo", key="btn_select_all_ind"):
+        for i in range(len(indicadores)):
+            st.session_state[f"ind_{i}"] = True
+    if c2.button("Borrar selección", key="btn_clear_ind"):
+        for i in range(len(indicadores)):
+            st.session_state[f"ind_{i}"] = False
     st.markdown("</div>", unsafe_allow_html=True)
 
-    indicador_sel = st.multiselect(
-        "Selecciona indicadores",
-        options=indicadores,
-        default=st.session_state.get("sidebar_indicadores", [i for i in indicadores if "real" in i.lower() or "proyect" in i.lower() or "wip" in i.lower()]),
-        key="sidebar_indicadores"
-    )
-
-    st.markdown("<div class='sidebar-smallnote'>Usa la búsqueda para filtrar. Usa los botones para seleccionar o limpiar.</div>", unsafe_allow_html=True)
+    # Scrollable checkbox grid (two columns)
+    st.markdown("<div class='scroll-box'>", unsafe_allow_html=True)
+    cols_per_row = 2
+    # Render checkboxes in a two-column layout using columns in Streamlit
+    num = len(indicadores)
+    rows = ceil(num / cols_per_row)
+    for r in range(rows):
+        cols = st.columns(cols_per_row)
+        for ci in range(cols_per_row):
+            idx = r * cols_per_row + ci
+            if idx < num:
+                ind = indicadores[idx]
+                key = f"ind_{idx}"
+                # show compact checkbox in each column
+                with cols[ci]:
+                    st.checkbox(ind, value=st.session_state.get(key, False), key=key, help="Indicador")
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # FECHA card
+    st.markdown("<div class='sidebar-small'>Usa la búsqueda rápida (arriba) o los botones para ajustar selección.</div>", unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    # Fecha card
     st.markdown("<div class='sidebar-card'>", unsafe_allow_html=True)
-    st.markdown("<h4>📅 Filtro de fechas</h4>", unsafe_allow_html=True)
-
+    st.markdown("### 📅 Filtro de fechas")
     filtro_tipo = st.radio(
         "Agrupar por:",
         ["🗓️ Día", "📆 Semana", "🗓️ Mes", "🎯 Rango personalizado"],
         index=0,
         key="sidebar_filtro_tipo"
     )
-
-    st.markdown("<div class='sidebar-smallnote'>Selecciona cómo quieres agrupar y después el rango/fecha.</div>", unsafe_allow_html=True)
+    st.markdown("<div class='sidebar-small'>Selecciona cómo quieres agrupar y después el rango/fecha.</div>", unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
 # ---------- Construir lista de columnas válidas (fechas) ----------
@@ -246,12 +217,14 @@ for col, parsed in zip(fechas_cols, fechas_dt_parsed):
         continue
     fechas_validas.append(col)
 
-# ---------- Melt para análisis (solo columnas válidas) ----------
-if not st.session_state.get("sidebar_indicadores"):
-    indicador_sel = [i for i in df[col_indicador].unique().tolist() if "real" in i.lower() or "proyect" in i.lower() or "wip" in i.lower()]
-else:
-    indicador_sel = st.session_state.get("sidebar_indicadores", [])
+# ---------- Obtener indicador_sel desde checkboxes ----------
+indicadores = list(df[col_indicador].unique())
+indicador_sel = [indicadores[i] for i in range(len(indicadores)) if st.session_state.get(f"ind_{i}", False)]
+if not indicador_sel:
+    # fallback por defecto si ninguno seleccionado
+    indicador_sel = [i for i in indicadores if "real" in i.lower() or "proyect" in i.lower() or "wip" in i.lower()]
 
+# ---------- Melt para análisis (solo columnas válidas) ----------
 df_melt = df[df[col_indicador].isin(indicador_sel)].melt(
     id_vars=[col_indicador],
     value_vars=fechas_validas,
