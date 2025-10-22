@@ -656,11 +656,4 @@ with st.expander("🗂️ Mostrar/ocultar hoja original de Google Sheets"):
         st.info("Haz clic en 'Mostrar hoja original' para ver la hoja completa sólo si la necesitas.")
 
 # ---------- FOOTER ----------
-st.markdown("---")
-st.markdown(
-    """
-    Recomendaciones:
-    - Añade ML_PASSWORD en Streamlit secrets para proteger la sección ML (recomendado).
-    - Si quieres acceso por GitHub login/SSO para ML solo para un usuario, puedo integrarlo.
-    """
-)
+
