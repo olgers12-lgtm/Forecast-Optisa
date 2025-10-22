@@ -1,13 +1,11 @@
 """
-Dashboard de Producción — versión final solicitada
+Dashboard de Producción — versión sin ML/IA
 
-Resumen:
-- Selectores (incluir fechas futuras, selección de indicadores y filtros de fecha) están en la parte superior del sidebar.
-- Los selectores de fecha (día/semana/mes/rango) se crean justo después del tipo de filtro.
-- La sección ML es privada: solo se muestran sus controles (selector indicador ML, horizonte, lookback) cuando se desbloquea con la clave definida en st.secrets["ML_PASSWORD"].
-- No se renderiza la sección "Resto del año".
-- Pipeline ML: intenta Prophet (si está instalado y funcional); si falla, usa fallback con scikit-learn (GradientBoosting).
-- Evité accesos a st.sidebar.session_state y usé st.session_state correctamente.
+Cambios principales:
+- Eliminé toda la sección ML/IA (imports, UI y pipeline).
+- Mantengo parsing robusto de columnas a fechas, sidebar mejorado (expanders, select all / clear),
+  filtros (día/semana/mes/rango), KPIs, gráficos históricos, heatmap WIP y descarga CSV.
+- Evité colisiones de widgets usando keys coherentes.
 """
 
 import streamlit as st
@@ -54,15 +52,24 @@ def cargar_datos(sheet_id, sheet_name):
 
 # ---------- UTIL: parsing robusto de encabezados a fecha ----------
 def agregar_ano(col):
+    """
+    Intenta convertir el texto de la cabecera de columna a 'YYYY-MM-DD'.
+    Maneja formatos ISO, 'día mes [año]', abreviaturas español/inglés, etc.
+    Devuelve string 'YYYY-MM-DD' o None si no pudo parsear.
+    """
     col_orig = str(col).strip()
     if not col_orig:
         return None
+
+    # 1) Intentar parse directo con pandas
     try:
         dt = pd.to_datetime(col_orig, dayfirst=True, yearfirst=False, errors="coerce")
         if not pd.isna(dt):
             return dt.strftime("%Y-%m-%d")
     except Exception:
         pass
+
+    # 2) Mapa de meses (español/inglés abrevs y completos)
     mes_map = {
         "ene":"01","ene.":"01","enero":"01",
         "feb":"02","feb.":"02","febrero":"02",
@@ -77,33 +84,39 @@ def agregar_ano(col):
         "nov":"11","nov.":"11","noviembre":"11",
         "dic":"12","dic.":"12","diciembre":"12","dec":"12","dec.":"12"
     }
+
+    # 3) Regex: día + mes (posible año opcional)
     m = re.match(r"^\s*(\d{1,2})\s*[-/\\\s]?\s*([A-Za-zñÑ\.]+)(?:[-/\\\s]?(\d{2,4}))?\s*$", col_orig)
     if m:
         dia = int(m.group(1))
         mes_txt = m.group(2).lower().strip().replace(".", "")
         año_txt = m.group(3)
         mes_key = mes_txt[:4] if len(mes_txt) >= 3 else mes_txt
+        # buscar clave completa en mes_map
         mes_num = None
         if mes_txt in mes_map:
             mes_num = mes_map[mes_txt]
         else:
-            for k, v in mes_map.items():
+            for k in mes_map.keys():
                 if k.startswith(mes_key):
-                    mes_num = v
+                    mes_num = mes_map[k]
                     break
         if not mes_num:
             return None
+        # determinar año
         if año_txt:
             año = int(año_txt)
             if año < 100:
                 año += 2000
         else:
-            año = datetime.today().year
+            año = datetime.today().year  # por defecto año actual
         try:
             dt = pd.Timestamp(year=año, month=int(mes_num), day=dia)
             return dt.strftime("%Y-%m-%d")
         except Exception:
             return None
+
+    # 4) Regex ISO explícito y otros formatos numéricos
     m2 = re.match(r"^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$", col_orig)
     if m2:
         y, mo, d = int(m2.group(1)), int(m2.group(2)), int(m2.group(3))
@@ -112,9 +125,11 @@ def agregar_ano(col):
             return dt.strftime("%Y-%m-%d")
         except Exception:
             return None
+
+    # No se pudo parsear
     return None
 
-# ---------- Cargar datos ----------
+# ---------- Cargar y preparar datos ----------
 df = cargar_datos(SHEET_ID, SHEET_NAME)
 col_indicador = next((c for c in df.columns if "indicador" in c.lower()), None)
 if not col_indicador:
@@ -122,30 +137,50 @@ if not col_indicador:
     st.stop()
 df = df[df[col_indicador].notnull() & (df[col_indicador] != '')]
 
-# ---------- SIDEBAR: controles (ordenados) ----------
+# ---------- SIDEBAR: controles (mejorados visualmente) ----------
 with st.sidebar:
-    st.markdown("<h2 style='color:#0D8ABC'>📅 Controles / Filtros</h2>", unsafe_allow_html=True)
+    st.markdown("<h2 style='color:#0D8ABC;margin-bottom:6px;'>📅 Controles / Filtros</h2>", unsafe_allow_html=True)
 
-    # include future columns
-    include_future = st.checkbox("Incluir fechas proyectadas/futuras (columnas nuevas)", value=True, key="chk_include_future")
-
-    # Indicadores selection (moved to sidebar)
-    indicadores = df[col_indicador].unique().tolist()
-    indicador_sel = st.multiselect(
-        "Selecciona indicadores:",
-        indicadores,
-        default=[i for i in indicadores if "real" in i.lower() or "proyect" in i.lower() or "wip" in i.lower()],
-        key="sidebar_indicadores"
-    )
+    # compact checkbox + label
+    col_a, col_b = st.columns([0.12, 0.88])
+    with col_a:
+        include_future = st.checkbox("", value=True, key="chk_include_future")
+    with col_b:
+        st.markdown("<div style='margin-top:6px;font-size:13px;'>Incluir fechas <br><span style='color:gray;font-size:11px;'>proyectadas / futuras</span></div>", unsafe_allow_html=True)
 
     st.markdown("---")
-    st.markdown("<b>Filtro de fechas</b>", unsafe_allow_html=True)
-    filtro_tipo = st.radio(
-        "Agrupar por:",
-        ["🗓️ Día", "📆 Semana", "🗓️ Mes", "🎯 Rango personalizado"],
-        horizontal=False,
-        key="sidebar_filtro_tipo"
-    )
+
+    # Indicadores expander con acciones rápidas
+    with st.expander("🧾 Indicadores", expanded=True):
+        indicadores = df[col_indicador].unique().tolist()
+
+        # quick actions
+        col1, col2 = st.columns([1,1])
+        if col1.button("Seleccionar todo", key="btn_select_all_ind"):
+            st.session_state["sidebar_indicadores"] = indicadores
+        if col2.button("Borrar selección", key="btn_clear_ind"):
+            st.session_state["sidebar_indicadores"] = []
+
+        indicador_sel = st.multiselect(
+            "Selecciona indicadores",
+            options=indicadores,
+            default=st.session_state.get("sidebar_indicadores", [i for i in indicadores if "real" in i.lower() or "proyect" in i.lower() or "wip" in i.lower()]),
+            key="sidebar_indicadores"
+        )
+
+        st.markdown("<div style='color:gray;font-size:12px;margin-top:6px;'>Usa la búsqueda para filtrar rápidamente. Usa los botones arriba para seleccionar todo / limpiar.</div>", unsafe_allow_html=True)
+
+    st.markdown("---")
+
+    # Filtro de fechas expander (mensaje, inputs se crean después)
+    with st.expander("📅 Filtro de fechas", expanded=True):
+        filtro_tipo = st.radio(
+            "Agrupar por:",
+            ["🗓️ Día", "📆 Semana", "🗓️ Mes", "🎯 Rango personalizado"],
+            index=0,
+            key="sidebar_filtro_tipo"
+        )
+        st.markdown("<div style='color:gray;font-size:12px;margin-top:6px;'>Selecciona cómo quieres agrupar y después el rango/fecha.</div>", unsafe_allow_html=True)
 
 # ---------- Construir lista de columnas válidas (fechas) ----------
 fechas_cols = [c for c in df.columns if c != col_indicador]
@@ -165,8 +200,10 @@ for col, parsed in zip(fechas_cols, fechas_dt_parsed):
     fechas_validas.append(col)
 
 # ---------- Melt para análisis (solo columnas válidas) ----------
-if not indicador_sel:
+if not st.session_state.get("sidebar_indicadores"):
     indicador_sel = [i for i in df[col_indicador].unique().tolist() if "real" in i.lower() or "proyect" in i.lower() or "wip" in i.lower()]
+else:
+    indicador_sel = st.session_state.get("sidebar_indicadores", [])
 
 df_melt = df[df[col_indicador].isin(indicador_sel)].melt(
     id_vars=[col_indicador],
@@ -178,7 +215,7 @@ df_melt["Fecha_dt"] = pd.to_datetime(df_melt["Fecha"].apply(agregar_ano), format
 df_melt["Valor"] = pd.to_numeric(df_melt["Valor"], errors="coerce")
 df_melt = df_melt.dropna(subset=["Fecha_dt"])
 
-# ---------- SIDEBAR: create date selectors (now that df_melt exists) ----------
+# ---------- SIDEBAR: crear selectores de fecha ahora que df_melt existe ----------
 with st.sidebar:
     if filtro_tipo == "🗓️ Día":
         fechas_disponibles = sorted(df_melt["Fecha_dt"].dt.date.unique()) if not df_melt.empty else []
@@ -238,36 +275,6 @@ with st.sidebar:
             format="DD/MM/YYYY",
             key="sidebar_fecha_rango"
         )
-
-    # --- ML unlock block moved AFTER date selectors so selectors are higher in sidebar
-    st.markdown("---")
-    st.markdown("<b>ML / IA (privado)</b>", unsafe_allow_html=True)
-
-    # Initialize ml_unlocked in session state if missing
-    if "ml_unlocked" not in st.session_state:
-        st.session_state["ml_unlocked"] = False
-
-    # Campo de contraseña (siempre visible)
-    ml_password_input = st.text_input("Clave ML (solo admins)", type="password", key="ml_pass_input")
-    secret_ml = st.secrets.get("ML_PASSWORD") if hasattr(st, "secrets") else None
-    if ml_password_input:
-        if secret_ml and ml_password_input == secret_ml:
-            st.session_state["ml_unlocked"] = True
-            st.success("Sección ML desbloqueada")
-        elif not secret_ml:
-            st.warning("ML_PASSWORD no encontrado en st.secrets. Añade la clave en secrets para protección real.", icon="⚠️")
-        else:
-            st.error("Clave ML incorrecta", icon="❌")
-
-    # ONLY render ML controls when unlocked
-    if st.session_state["ml_unlocked"]:
-        st.markdown("**Controles ML**", unsafe_allow_html=True)
-        ml_param = st.selectbox("Indicador ML:", ["Salida Real", "Entrada Real"], key="ml_param_sidebar")
-        ml_horizon = st.slider("Horizonte ML (días)", min_value=3, max_value=30, value=7, key="ml_horizon_sidebar")
-        ml_lookback = st.number_input("Histórico ML (días)", min_value=30, max_value=365, value=90, step=30, key="ml_lookback_sidebar")
-        if st.button("Cerrar sesión ML", key="btn_ml_logout"):
-            st.session_state["ml_unlocked"] = False
-            st.success("Sesión ML cerrada")
 
 # ---------- Construir mask_fecha según selects ----------
 if filtro_tipo == "🗓️ Día":
@@ -474,3 +481,4 @@ with st.expander("🗂️ Mostrar/ocultar hoja original de Google Sheets"):
     else:
         st.info("Haz clic en 'Mostrar hoja original' para ver la hoja completa sólo si la necesitas.")
 
+# ---------- FOOTER ----------
