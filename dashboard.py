@@ -1,11 +1,11 @@
 """
-Dashboard de Producción — versión sin ML/IA
+Dashboard de Producción — versión limpia y visualmente mejorada
 
-Cambios principales:
-- Eliminé toda la sección ML/IA (imports, UI y pipeline).
-- Mantengo parsing robusto de columnas a fechas, sidebar mejorado (expanders, select all / clear),
-  filtros (día/semana/mes/rango), KPIs, gráficos históricos, heatmap WIP y descarga CSV.
-- Evité colisiones de widgets usando keys coherentes.
+- Se eliminaron todas las secciones ML/IA.
+- Sidebar rediseñado con "cards" (CSS ligero), botones Select All / Clear, multiselect con scroll.
+- Parsing robusto de encabezados (agregar_ano) para detectar columnas fecha/futuras.
+- Filtros Día / Semana / Mes / Rango y selectores creados dinámicamente.
+- KPIs, gráficos históricos, heatmap WIP y descarga CSV incluidos.
 """
 
 import streamlit as st
@@ -137,50 +137,97 @@ if not col_indicador:
     st.stop()
 df = df[df[col_indicador].notnull() & (df[col_indicador] != '')]
 
-# ---------- SIDEBAR: controles (mejorados visualmente) ----------
-with st.sidebar:
-    st.markdown("<h2 style='color:#0D8ABC;margin-bottom:6px;'>📅 Controles / Filtros</h2>", unsafe_allow_html=True)
+# ---------- SIDEBAR: styled improved ----------
+# Inyectar CSS ligero para mejorar visual
+st.markdown(
+    """
+    <style>
+    /* Card look for sidebar groups */
+    .sidebar-card {
+        background: #ffffff;
+        border-radius: 10px;
+        padding: 12px 14px;
+        margin-bottom: 12px;
+        box-shadow: 0 2px 6px rgba(19, 38, 63, 0.04);
+        border: 1px solid rgba(30, 41, 59, 0.04);
+    }
+    .sidebar-card h4 {
+        margin: 0 0 8px 0;
+        font-size: 14px;
+        color: #0D8ABC;
+    }
+    .sidebar-smallnote {
+        color: #6b7280; font-size:12px; margin-top:8px;
+    }
+    /* Force multiselect box to have max height and internal scroll */
+    .stMultiSelect > div[role="listbox"] {
+        max-height: 170px !important;
+        overflow: auto !important;
+    }
+    /* Buttons small style */
+    .side-btns .stButton>button {
+        padding: 6px 10px;
+        border-radius: 8px;
+        background: #ffffff;
+        border: 1px solid rgba(30,41,59,0.08);
+    }
+    .sidebar-compact { gap: 8px; display:flex; flex-direction:column; }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
-    # compact checkbox + label
+with st.sidebar:
+    st.markdown("<div class='sidebar-card sidebar-compact'>", unsafe_allow_html=True)
+    st.markdown("<h4>📅 Controles / Filtros</h4>", unsafe_allow_html=True)
+
+    # compact checkbox + label inline
     col_a, col_b = st.columns([0.12, 0.88])
     with col_a:
         include_future = st.checkbox("", value=True, key="chk_include_future")
     with col_b:
-        st.markdown("<div style='margin-top:6px;font-size:13px;'>Incluir fechas <br><span style='color:gray;font-size:11px;'>proyectadas / futuras</span></div>", unsafe_allow_html=True)
+        st.markdown("<div style='font-size:13px;margin-top:4px;'>Incluir fechas<br><span style='color:#6b7280;font-size:11px;'>proyectadas / futuras</span></div>", unsafe_allow_html=True)
 
-    st.markdown("---")
+    st.markdown("</div>", unsafe_allow_html=True)
 
-    # Indicadores expander con acciones rápidas
-    with st.expander("🧾 Indicadores", expanded=True):
-        indicadores = df[col_indicador].unique().tolist()
+    # INDICADORES card
+    st.markdown("<div class='sidebar-card'>", unsafe_allow_html=True)
+    st.markdown("<h4>🧾 Indicadores</h4>", unsafe_allow_html=True)
 
-        # quick actions
-        col1, col2 = st.columns([1,1])
-        if col1.button("Seleccionar todo", key="btn_select_all_ind"):
-            st.session_state["sidebar_indicadores"] = indicadores
-        if col2.button("Borrar selección", key="btn_clear_ind"):
-            st.session_state["sidebar_indicadores"] = []
+    indicadores = df[col_indicador].unique().tolist()
 
-        indicador_sel = st.multiselect(
-            "Selecciona indicadores",
-            options=indicadores,
-            default=st.session_state.get("sidebar_indicadores", [i for i in indicadores if "real" in i.lower() or "proyect" in i.lower() or "wip" in i.lower()]),
-            key="sidebar_indicadores"
-        )
+    # Quick action buttons
+    st.markdown("<div class='side-btns'>", unsafe_allow_html=True)
+    col1, col2 = st.columns([1,1])
+    if col1.button("Seleccionar todo", key="btn_select_all_ind"):
+        st.session_state["sidebar_indicadores"] = indicadores
+    if col2.button("Borrar selección", key="btn_clear_ind"):
+        st.session_state["sidebar_indicadores"] = []
+    st.markdown("</div>", unsafe_allow_html=True)
 
-        st.markdown("<div style='color:gray;font-size:12px;margin-top:6px;'>Usa la búsqueda para filtrar rápidamente. Usa los botones arriba para seleccionar todo / limpiar.</div>", unsafe_allow_html=True)
+    indicador_sel = st.multiselect(
+        "Selecciona indicadores",
+        options=indicadores,
+        default=st.session_state.get("sidebar_indicadores", [i for i in indicadores if "real" in i.lower() or "proyect" in i.lower() or "wip" in i.lower()]),
+        key="sidebar_indicadores"
+    )
 
-    st.markdown("---")
+    st.markdown("<div class='sidebar-smallnote'>Usa la búsqueda para filtrar. Usa los botones para seleccionar o limpiar.</div>", unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
 
-    # Filtro de fechas expander (mensaje, inputs se crean después)
-    with st.expander("📅 Filtro de fechas", expanded=True):
-        filtro_tipo = st.radio(
-            "Agrupar por:",
-            ["🗓️ Día", "📆 Semana", "🗓️ Mes", "🎯 Rango personalizado"],
-            index=0,
-            key="sidebar_filtro_tipo"
-        )
-        st.markdown("<div style='color:gray;font-size:12px;margin-top:6px;'>Selecciona cómo quieres agrupar y después el rango/fecha.</div>", unsafe_allow_html=True)
+    # FECHA card
+    st.markdown("<div class='sidebar-card'>", unsafe_allow_html=True)
+    st.markdown("<h4>📅 Filtro de fechas</h4>", unsafe_allow_html=True)
+
+    filtro_tipo = st.radio(
+        "Agrupar por:",
+        ["🗓️ Día", "📆 Semana", "🗓️ Mes", "🎯 Rango personalizado"],
+        index=0,
+        key="sidebar_filtro_tipo"
+    )
+
+    st.markdown("<div class='sidebar-smallnote'>Selecciona cómo quieres agrupar y después el rango/fecha.</div>", unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
 
 # ---------- Construir lista de columnas válidas (fechas) ----------
 fechas_cols = [c for c in df.columns if c != col_indicador]
@@ -480,5 +527,3 @@ with st.expander("🗂️ Mostrar/ocultar hoja original de Google Sheets"):
         st.dataframe(df, use_container_width=True)
     else:
         st.info("Haz clic en 'Mostrar hoja original' para ver la hoja completa sólo si la necesitas.")
-
-# ---------- FOOTER ----------
