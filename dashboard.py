@@ -1,15 +1,9 @@
 """
-Dashboard de Producción + ML (completo)
-
-Características incluidas:
-- Lectura desde Google Sheets (gspread + service account via Streamlit secrets)
-- Parsing robusto de nombres de columnas a fechas (función agregar_ano)
-- Sidebar con filtros (Día / Semana / Mes / Rango) y opción "Incluir fechas proyectadas/futuras"
-- KPIs acumulados al corte (último día visible del rango)
-- Heatmap WIP, gráficos históricos
-- Panel "Resto del año" (suma de proyecciones en las columnas futuras)
-- Sección ML/IA (intenta Prophet; si falla, usa fallback con scikit-learn GradientBoosting)
-- Evita colisiones de widgets (keys únicas y checkbox para mostrar la hoja original)
+Dashboard de Producción + ML (completo) - ajustado:
+- Se movieron las selecciones principales al sidebar (indicadores, incluir fechas futuras, filtros de fecha).
+- Se movieron los controles de ML al sidebar.
+- Se quitó "Entrada Proyectada (Resto año)" del panel 'Resto del año' (queda Salida Proyectada y Eficiencia).
+- Se mantuvo el parsing robusto de columnas a fechas y la sección ML/fallback.
 """
 
 import streamlit as st
@@ -141,19 +135,43 @@ if not col_indicador:
     st.stop()
 df = df[df[col_indicador].notnull() & (df[col_indicador] != '')]
 
-# Construyo fechas a partir de encabezados (respetando el checkbox de incluir futuras)
-# Checkbox en sidebar para incluir o excluir fechas futuras/proyectadas
+# ---------- SIDEBAR: controles moved to left ----------
 with st.sidebar:
-    st.markdown("<h2 style='color:#0D8ABC'>📅 Filtros de Fechas</h2>", unsafe_allow_html=True)
+    st.markdown("<h2 style='color:#0D8ABC'>📅 Controles / Filtros</h2>", unsafe_allow_html=True)
+
+    # include future columns
     include_future = st.checkbox("Incluir fechas proyectadas/futuras (columnas nuevas)", value=True, key="chk_include_future")
 
-# Extraer columnas que representan fechas (todas excepto la columna indicador)
-fechas_cols = [c for c in df.columns if c != col_indicador]
-# Mapear a fechas parseadas (o None)
-fechas_dt_parsed = [agregar_ano(c) for c in fechas_cols]
+    # Indicadores selection (moved to sidebar)
+    indicadores = df[col_indicador].unique().tolist()
+    indicador_sel = st.multiselect(
+        "Selecciona indicadores:",
+        indicadores,
+        default=[i for i in indicadores if "real" in i.lower() or "proyect" in i.lower() or "wip" in i.lower()],
+        key="sidebar_indicadores"
+    )
 
-# Si include_future == False, descartamos fechas > today
+    st.markdown("---")
+    st.markdown("<b>Filtro de fechas</b>", unsafe_allow_html=True)
+    filtro_tipo = st.radio(
+        "Agrupar por:",
+        ["🗓️ Día", "📆 Semana", "🗓️ Mes", "🎯 Rango personalizado"],
+        horizontal=False,
+        key="sidebar_filtro_tipo"
+    )
+
+    # fecha selectors will be created later after df_melt is ready (we need Fecha_dt), so we keep the selection type here
+    st.markdown("---")
+    st.markdown("<b>ML / IA (controles)</b>", unsafe_allow_html=True)
+    ml_param = st.selectbox("Indicador ML:", ["Salida Real", "Entrada Real"], key="ml_param_sidebar")
+    ml_horizon = st.slider("Horizonte ML (días)", min_value=3, max_value=30, value=7, key="ml_horizon_sidebar")
+    ml_lookback = st.number_input("Histórico ML (días)", min_value=30, max_value=365, value=90, step=30, key="ml_lookback_sidebar")
+
+# ---------- Construir lista de columnas válidas (fechas) ----------
+fechas_cols = [c for c in df.columns if c != col_indicador]
+fechas_dt_parsed = [agregar_ano(c) for c in fechas_cols]
 today_ts = pd.Timestamp(datetime.today().date())
+
 fechas_validas = []
 for col, parsed in zip(fechas_cols, fechas_dt_parsed):
     if parsed is None:
@@ -166,17 +184,10 @@ for col, parsed in zip(fechas_cols, fechas_dt_parsed):
         continue
     fechas_validas.append(col)
 
-# NOTA: si quieres ver sólo columnas proyectadas, puedes añadir lógica adicional:
-# Ejemplo: only_proj = st.sidebar.checkbox("Solo proyectadas", value=False)
-# y filtrar por 'proyect' in col.lower()
-
 # ---------- Melt para análisis (solo columnas válidas) ----------
-indicadores = df[col_indicador].unique().tolist()
-indicador_sel = st.multiselect(
-    "Selecciona indicadores:",
-    indicadores,
-    default=[i for i in indicadores if "real" in i.lower() or "proyect" in i.lower() or "wip" in i.lower()]
-)
+# Use indicador_sel chosen in sidebar; if empty, default to previously sensible defaults
+if not indicador_sel:
+    indicador_sel = [i for i in df[col_indicador].unique().tolist() if "real" in i.lower() or "proyect" in i.lower() or "wip" in i.lower()]
 
 df_melt = df[df[col_indicador].isin(indicador_sel)].melt(
     id_vars=[col_indicador],
@@ -188,82 +199,96 @@ df_melt["Fecha_dt"] = pd.to_datetime(df_melt["Fecha"].apply(agregar_ano), format
 df_melt["Valor"] = pd.to_numeric(df_melt["Valor"], errors="coerce")
 df_melt = df_melt.dropna(subset=["Fecha_dt"])
 
-# ---------- SIDEBAR: Filtros (día/semana/mes/rango) ----------
-hoy = datetime.today().date()
-semana_actual = datetime.today().isocalendar().week
-año_actual = datetime.today().isocalendar().year
-
+# ---------- Now create the specific date selectors in sidebar based on filtro_tipo ----------
 with st.sidebar:
-    filtro_tipo = st.radio(
-        "Agrupar por:",
-        ["🗓️ Día", "📆 Semana", "🗓️ Mes", "🎯 Rango personalizado"],
-        horizontal=False
-    )
+    # create selectors using df_melt now prepared
+    if filtro_tipo == "🗓️ Día":
+        fechas_disponibles = sorted(df_melt["Fecha_dt"].dt.date.unique()) if not df_melt.empty else []
+        default_dia = datetime.today().date() if datetime.today().date() in fechas_disponibles else (fechas_disponibles[-1] if fechas_disponibles else datetime.today().date())
+        fechas_sel = st.date_input(
+            "Selecciona uno o más días:",
+            value=default_dia,
+            min_value=min(fechas_disponibles) if fechas_disponibles else None,
+            max_value=max(fechas_disponibles) if fechas_disponibles else None,
+            format="DD/MM/YYYY",
+            key="sidebar_fechas_sel"
+        )
+    elif filtro_tipo == "📆 Semana":
+        # compute weeks present
+        if not df_melt.empty:
+            df_melt["SemanaISO"] = df_melt["Fecha_dt"].dt.isocalendar().week
+            df_melt["AñoISO"] = df_melt["Fecha_dt"].dt.isocalendar().year
+            semanas_unicas = sorted(df_melt[["AñoISO", "SemanaISO"]].drop_duplicates().values.tolist())
+        else:
+            semanas_unicas = []
+        if semanas_unicas:
+            try:
+                semana_default_idx = next(i for i, (year, week) in enumerate(semanas_unicas) if year == datetime.today().isocalendar().year and week == datetime.today().isocalendar().week)
+            except StopIteration:
+                semana_default_idx = 0
+            semana_labels = [
+                f"Semana {week} ({df_melt[(df_melt['AñoISO'] == year) & (df_melt['SemanaISO'] == week)]['Fecha_dt'].min().strftime('%d-%b')} - {df_melt[(df_melt['AñoISO'] == year) & (df_melt['SemanaISO'] == week)]['Fecha_dt'].max().strftime('%d-%b')})"
+                for year, week in semanas_unicas
+            ]
+            semana_sel_idx = st.selectbox(
+                "Selecciona semana:", options=range(len(semanas_unicas)),
+                format_func=lambda i: semana_labels[i],
+                index=semana_default_idx,
+                key="sidebar_semana_sel"
+            )
+        else:
+            semana_sel_idx = None
+    elif filtro_tipo == "🗓️ Mes":
+        meses_disponibles = sorted(df_melt["Fecha_dt"].dt.strftime("%B %Y").unique()) if not df_melt.empty else []
+        if meses_disponibles:
+            mes_sel = st.selectbox("Selecciona mes:", options=meses_disponibles, key="sidebar_mes_sel")
+        else:
+            mes_sel = None
+    else:
+        # rango personalizado
+        fecha_min = df_melt["Fecha_dt"].min() if not df_melt.empty else pd.Timestamp(datetime.today().date())
+        fecha_max = df_melt["Fecha_dt"].max() if not df_melt.empty else pd.Timestamp(datetime.today().date())
+        fecha_min_date = fecha_min.date()
+        fecha_max_date = fecha_max.date()
+        try:
+            value_default = (datetime.today().date(), datetime.today().date()) if fecha_min_date <= datetime.today().date() <= fecha_max_date else (fecha_max_date - timedelta(days=7), fecha_max_date)
+        except Exception:
+            value_default = (fecha_max_date - timedelta(days=7), fecha_max_date)
+        fecha_rango = st.date_input(
+            "Selecciona el rango de fechas:",
+            value=value_default,
+            min_value=fecha_min_date,
+            max_value=fecha_max_date,
+            format="DD/MM/YYYY",
+            key="sidebar_fecha_rango"
+        )
 
-if "Día" in filtro_tipo:
-    fechas_disponibles = sorted(df_melt["Fecha_dt"].dt.date.unique())
-    default_dia = hoy if hoy in fechas_disponibles else (fechas_disponibles[-1] if fechas_disponibles else hoy)
-    fechas_sel = st.date_input(
-        "Selecciona uno o más días:",
-        value=default_dia,
-        min_value=min(fechas_disponibles) if fechas_disponibles else None,
-        max_value=max(fechas_disponibles) if fechas_disponibles else None,
-        format="DD/MM/YYYY"
-    )
+# ---------- Build mask_fecha according to sidebar selections ----------
+if filtro_tipo == "🗓️ Día":
     if isinstance(fechas_sel, list):
         mask_fecha = df_melt["Fecha_dt"].dt.date.isin(fechas_sel)
     else:
         mask_fecha = df_melt["Fecha_dt"].dt.date == fechas_sel
     agrupador = "dia"
-elif "Semana" in filtro_tipo:
-    df_melt["SemanaISO"] = df_melt["Fecha_dt"].dt.isocalendar().week
-    df_melt["AñoISO"] = df_melt["Fecha_dt"].dt.isocalendar().year
-    semanas_unicas = sorted(df_melt[["AñoISO", "SemanaISO"]].drop_duplicates().values.tolist())
+elif filtro_tipo == "📆 Semana":
     if semanas_unicas:
-        try:
-            semana_default_idx = next(i for i, (year, week) in enumerate(semanas_unicas) if year == año_actual and week == semana_actual)
-        except StopIteration:
-            semana_default_idx = len(semanas_unicas) - 1
-        semana_labels = [
-            f"Semana {week} ({df_melt[(df_melt['AñoISO'] == year) & (df_melt['SemanaISO'] == week)]['Fecha_dt'].min().strftime('%d-%b')} - {df_melt[(df_melt['AñoISO'] == year) & (df_melt['SemanaISO'] == week)]['Fecha_dt'].max().strftime('%d-%b')})"
-            for year, week in semanas_unicas
-        ]
-        semana_sel_idx = st.selectbox(
-            "Selecciona semana:", options=range(len(semanas_unicas)),
-            format_func=lambda i: semana_labels[i],
-            index=semana_default_idx
-        )
         year_sel, week_sel = semanas_unicas[semana_sel_idx]
         mask_fecha = (df_melt["AñoISO"] == year_sel) & (df_melt["SemanaISO"] == week_sel)
     else:
         mask_fecha = pd.Series([False]*len(df_melt))
     agrupador = "semana"
-elif "Mes" in filtro_tipo:
-    meses_disponibles = sorted(df_melt["Fecha_dt"].dt.strftime("%B %Y").unique())
-    mes_sel = st.selectbox("Selecciona mes:", options=meses_disponibles) if len(meses_disponibles) else None
-    mask_fecha = df_melt["Fecha_dt"].dt.strftime("%B %Y") == mes_sel if mes_sel else pd.Series([False]*len(df_melt))
+elif filtro_tipo == "🗓️ Mes":
+    if mes_sel:
+        mask_fecha = df_melt["Fecha_dt"].dt.strftime("%B %Y") == mes_sel
+    else:
+        mask_fecha = pd.Series([False]*len(df_melt))
     agrupador = "mes"
 else:
-    fecha_min, fecha_max = df_melt["Fecha_dt"].min(), df_melt["Fecha_dt"].max()
-    fecha_min_date = fecha_min.date() if pd.notnull(fecha_min) else hoy
-    fecha_max_date = fecha_max.date() if pd.notnull(fecha_max) else hoy
     try:
-        value_default = (hoy, hoy) if fecha_min_date <= hoy <= fecha_max_date else (fecha_max_date - timedelta(days=7), fecha_max_date)
-    except Exception:
-        value_default = (fecha_max_date - timedelta(days=7), fecha_max_date)
-    fecha_rango = st.date_input(
-        "Selecciona el rango de fechas:",
-        value=value_default,
-        min_value=fecha_min_date,
-        max_value=fecha_max_date,
-        format="DD/MM/YYYY"
-    )
-    if not isinstance(fecha_rango, (list, tuple)) or len(fecha_rango) != 2 or fecha_rango[0] == fecha_rango[1]:
-        st.warning("Por favor selecciona un rango de fechas válido (más de un día).")
-        mask_fecha = pd.Series([False]*len(df_melt))
-    else:
         fecha_inicio, fecha_fin = [pd.Timestamp(f) for f in fecha_rango]
         mask_fecha = (df_melt["Fecha_dt"] >= fecha_inicio) & (df_melt["Fecha_dt"] <= fecha_fin)
+    except Exception:
+        mask_fecha = pd.Series([False]*len(df_melt))
     agrupador = "rango"
 
 df_filtrado_fecha = df_melt[mask_fecha]
@@ -284,7 +309,7 @@ if not df_filtrado_fecha.empty:
     delta_salida = salida_real - salida_proj if salida_proj else None
     eficiencia = salida_real / salida_proj * 100 if salida_proj > 0 else None
 else:
-    fecha_corte = pd.Timestamp(hoy)
+    fecha_corte = pd.Timestamp(datetime.today().date())
     entrada_real = entrada_proj = salida_real = salida_proj = 0
     delta_entrada = delta_salida = eficiencia = None
     wip = pd.Series(dtype=float)
@@ -333,7 +358,7 @@ kpi_cols[3].markdown(
 )
 
 # --- Alertas WIP solo hoy ---
-df_hoy = df_filtrado_fecha[df_filtrado_fecha["Fecha_dt"].dt.date == hoy]
+df_hoy = df_filtrado_fecha[df_filtrado_fecha["Fecha_dt"].dt.date == datetime.today().date()]
 wip_hoy = df_hoy[df_hoy[col_indicador].str.lower().str.contains("wip")]['Valor']
 
 if not wip_hoy.empty:
@@ -364,32 +389,34 @@ st.markdown("""
     f"{(salida_proj/entrada_proj*100):.1f}" if entrada_proj and pd.notnull(salida_proj) and entrada_proj>0 else "-"
 ), unsafe_allow_html=True)
 
-# ---------- FUNCIONALIDAD: 'Resto del año' mostrado en dashboard ----------
+# ---------- FUNCIONALIDAD: 'Resto del año' mostrado en dashboard (Sin entrada proyectada) ----------
 # Usamos fecha_corte (último día visible) si existe, sino hoy
-fecha_corte = fecha_corte if 'fecha_corte' in locals() else pd.Timestamp(hoy)
+fecha_corte = fecha_corte if 'fecha_corte' in locals() else pd.Timestamp(datetime.today().date())
 fecha_fin_ano = pd.Timestamp(year=fecha_corte.year, month=12, day=31)
 fecha_inicio_resto = (fecha_corte + pd.Timedelta(days=1)).normalize()
 
 mask_resto_ano = (df_melt["Fecha_dt"] >= fecha_inicio_resto) & (df_melt["Fecha_dt"] <= fecha_fin_ano)
-entrada_proj_resto = df_melt[mask_resto_ano & df_melt[col_indicador].str.lower().str.contains("entrada-proyectada|entrada proyectada")]["Valor"].sum()
+# Nota: quitada la suma de "Entrada Proyectada (Resto año)" por petición
 salida_proj_resto = df_melt[mask_resto_ano & df_melt[col_indicador].str.lower().str.contains("salida proyectada|salida-proyectada")]["Valor"].sum()
-eficiencia_proj_resto = (salida_proj_resto / entrada_proj_resto * 100) if entrada_proj_resto > 0 else None
+eficiencia_proj_resto = None
+# Calculamos eficiencia solo si hay entrada proyectada en el resto del año (si existe)
+entrada_proj_resto_exists = df_melt[mask_resto_ano & df_melt[col_indicador].str.lower().str.contains("entrada-proyectada|entrada proyectada")]["Valor"].sum()
+if entrada_proj_resto_exists > 0:
+    eficiencia_proj_resto = (salida_proj_resto / entrada_proj_resto_exists * 100) if entrada_proj_resto_exists > 0 else None
 
-entrada_proj_resto_str = f"{int(entrada_proj_resto):,}" if pd.notnull(entrada_proj_resto) and entrada_proj_resto != 0 else "-"
 salida_proj_resto_str = f"{int(salida_proj_resto):,}" if pd.notnull(salida_proj_resto) and salida_proj_resto != 0 else "-"
 eficiencia_proj_resto_str = f"{eficiencia_proj_resto:.1f}" if eficiencia_proj_resto is not None else "-"
 
 st.markdown(
     f"""
     <div style='margin-top:12px;padding:12px 16px;background:#f3f8f7;border-radius:12px;box-shadow:0 1px 6px #eee;display:flex;gap:36px;justify-content:center;'>
-        <div style='font-size:16px;color:#0D8ABC;'><strong>Entrada Proyectada (Resto año):</strong> {entrada_proj_resto_str}</div>
         <div style='font-size:16px;color:#F6AE2D;'><strong>Salida Proyectada (Resto año):</strong> {salida_proj_resto_str}</div>
         <div style='font-size:16px;color:#61C0BF;'><strong>Eficiencia Proyectada (Resto año %):</strong> {eficiencia_proj_resto_str}</div>
     </div>
     """, unsafe_allow_html=True
 )
-if (entrada_proj_resto == 0 and salida_proj_resto == 0):
-    st.info(f"No se encontraron valores proyectados entre {fecha_inicio_resto.date()} y {fecha_fin_ano.date()}. Verifica las columnas/fechas en la hoja de Excel.")
+if (salida_proj_resto == 0):
+    st.info(f"No se encontraron valores proyectados de salida entre {fecha_inicio_resto.date()} y {fecha_fin_ano.date()}. Verifica las columnas/fechas en la hoja de Excel.")
 
 # ---------- GRÁFICOS HISTÓRICOS ----------
 st.markdown("<h2 style='color:#3EC0ED'>📊 Evolución de Indicadores</h2>", unsafe_allow_html=True)
@@ -466,27 +493,11 @@ if not df_filtrado_fecha.empty:
 # ---------- SECCIÓN ML / IA (opcional, robusta) ----------
 st.markdown("<hr>")
 st.markdown("<h2 style='color:#0D8ABC'>🤖 Predicción Inteligente (ML & IA)</h2>", unsafe_allow_html=True)
-st.markdown(
-    """
-    <div style='background:#f1f6f9;padding:10px 12px;border-radius:8px;margin-bottom:10px;'>
-      <b>Funciones:</b>
-      <ul>
-        <li>Predicción de Entradas/Salidas con Prophet (si está disponible) o fallback ML (GradientBoosting).</li>
-        <li>Filtrado automático de outliers (IQR), uso de histórico reciente (ajustable).</li>
-        <li>Regresores: fin de semana y día de semana; clipping de predicción para evitar picos irreales.</li>
-      </ul>
-    </div>
-    """, unsafe_allow_html=True
-)
 
-# ML UI controls
-col1, col2, col3 = st.columns([2,1,1])
-with col1:
-    param_ml = st.selectbox("Selecciona indicador a predecir:", ["Salida Real", "Entrada Real"], key="ml_param")
-with col2:
-    horizon = st.slider("Horizonte ML (días)", min_value=3, max_value=30, value=7, key="ml_horizon")
-with col3:
-    lookback_days = st.number_input("Histórico (días) para entrenar", min_value=30, max_value=365, value=90, step=30, key="ml_lookback")
+# Use ML controls from sidebar
+param_ml = ml_param
+horizon = ml_horizon
+lookback_days = ml_lookback
 
 # Try prophet import
 use_prophet = False
@@ -497,7 +508,6 @@ except Exception:
     use_prophet = False
     st.info("Prophet no disponible: usaremos fallback ML (scikit-learn) si es necesario.", icon="ℹ️")
 
-# Helper ML functions (reused)
 def prepare_daily_series(df_melt_local, indicador_keyword, lookback_days_local):
     dfs = df_melt_local[df_melt_local[col_indicador].str.lower().str.contains(indicador_keyword)].copy()
     dfs = dfs.dropna(subset=["Fecha_dt", "Valor"])
@@ -528,7 +538,6 @@ def build_features_from_series(series, lags=(1,2,3,7,14)):
     df_local = df_local.dropna()
     return df_local
 
-# Run ML process
 ind_keyword = "salida real" if param_ml == "Salida Real" else "entrada real"
 ind_proj_keyword = "salida proyectada" if "salida" in ind_keyword else "entrada-proyectada"
 
